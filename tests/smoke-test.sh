@@ -91,7 +91,7 @@ echo "=== Ops Stack ==="
 check "   Zammad Init"       "mcp-zammad-init"      exited_ok
 check "#9 Zammad Rails"      "mcp-zammad-rails"     healthy
 check "#10 Zammad WS"        "mcp-zammad-websocket" running
-check "#11 Zammad Worker"    "mcp-zammad-worker"    running
+check "#11 Zammad Scheduler"  "mcp-zammad-scheduler" running
 check "#12 Elasticsearch"    "mcp-elasticsearch"    healthy
 check "#13 BookStack"        "mcp-bookstack"        healthy
 check "#14 Vaultwarden"      "mcp-vaultwarden"      healthy
