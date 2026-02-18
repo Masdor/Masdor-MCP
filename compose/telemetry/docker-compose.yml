@@ -46,6 +46,7 @@ services:
     restart: unless-stopped
     networks:
       - mcp-app-net
+      - mcp-data-net
     expose:
       - "8080"
     environment:
@@ -200,6 +201,7 @@ services:
     volumes:
       - ../../config/crowdsec/acquis.yml:/etc/crowdsec/acquis.yaml:ro
       - /var/log:/var/log:ro
+      - mcp-crowdsec-data:/var/lib/crowdsec/data
     security_opt:
       - no-new-privileges:true
 
@@ -239,4 +241,6 @@ volumes:
   mcp-loki-data:
     external: true
   mcp-uptime-kuma-data:
+    external: true
+  mcp-crowdsec-data:
     external: true

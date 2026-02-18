@@ -7,6 +7,10 @@
 
 set -euo pipefail
 
+# Load env for project name
+if [ -f .env ]; then set -a; source .env; set +a; fi
+PROJECT="${COMPOSE_PROJECT_NAME:-mcp}"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -36,7 +40,7 @@ echo ""
 
 # 1. Check that only nginx exposes ports on 0.0.0.0
 echo "=== Port Exposure ==="
-exposed=$(docker ps --filter "label=com.docker.compose.project=mcp" \
+exposed=$(docker ps --filter "label=com.docker.compose.project=${PROJECT}" \
     --format "{{.Names}} {{.Ports}}" 2>/dev/null | grep "0.0.0.0" | grep -v "mcp-nginx" || true)
 if [ -z "$exposed" ]; then
     check "Only nginx exposes ports to 0.0.0.0" 0
@@ -72,7 +76,7 @@ fi
 echo "=== Container Security ==="
 containers_with_nnp=0
 total_containers=0
-for c in $(docker ps --filter "label=com.docker.compose.project=mcp" --format "{{.Names}}"); do
+for c in $(docker ps --filter "label=com.docker.compose.project=${PROJECT}" --format "{{.Names}}"); do
     total_containers=$((total_containers + 1))
     nnp=$(docker inspect --format='{{.HostConfig.SecurityOpt}}' "$c" 2>/dev/null || echo "")
     if echo "$nnp" | grep -q "no-new-privileges"; then

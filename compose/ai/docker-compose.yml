@@ -23,11 +23,11 @@ services:
     volumes:
       - mcp-ollama-data:/root/.ollama
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:11434/ > /dev/null"]
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:11434/api/tags >/dev/null"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 60s
+      retries: 15
+      start_period: 120s
     # GPU passthrough (uncomment if NVIDIA GPU available)
     # deploy:
     #   resources:
@@ -44,6 +44,7 @@ services:
   # --------------------------------------------------------------------------
   litellm:
     image: ghcr.io/berriai/litellm:${LITELLM_TAG:-latest}
+    platform: linux/amd64
     container_name: mcp-litellm
     restart: unless-stopped
     networks:
@@ -64,7 +65,7 @@ services:
       start_period: 30s
     depends_on:
       ollama:
-        condition: service_healthy
+        condition: service_started
     security_opt:
       - no-new-privileges:true
 
@@ -93,7 +94,7 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
     depends_on:
       ollama:
-        condition: service_healthy
+        condition: service_started
       redis-queue:
         condition: service_healthy
     security_opt:
@@ -139,7 +140,7 @@ services:
       start_period: 30s
     depends_on:
       ollama:
-        condition: service_healthy
+        condition: service_started
       redis-queue:
         condition: service_healthy
     security_opt:
