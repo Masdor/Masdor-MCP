@@ -1,0 +1,276 @@
+# ============================================================================
+# MCP v7 — Core Stack (8 Containers: #1-#8)
+# ============================================================================
+# PostgreSQL, Redis, pgvector, OpenBao, nginx, Keycloak, n8n, ntfy
+# ============================================================================
+
+services:
+
+  # --------------------------------------------------------------------------
+  # #1 — PostgreSQL (Central Database)
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgres:${POSTGRES_TAG:-16-alpine}
+    container_name: mcp-postgres
+    restart: unless-stopped
+    networks:
+      - mcp-data-net
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # Pass per-service DB passwords for init-db.sh
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      N8N_DB_PASSWORD: ${N8N_DB_PASSWORD}
+      ZAMMAD_DB_PASSWORD: ${ZAMMAD_DB_PASSWORD}
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD}
+      ZABBIX_DB_PASSWORD: ${ZABBIX_DB_PASSWORD}
+      GUACAMOLE_DB_PASSWORD: ${GUACAMOLE_DB_PASSWORD}
+    volumes:
+      - mcp-postgres-data:/var/lib/postgresql/data
+      - ../../scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #2 — Redis (Cache & Queue)
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:${REDIS_TAG:-7-alpine}
+    container_name: mcp-redis
+    restart: unless-stopped
+    networks:
+      - mcp-data-net
+    expose:
+      - "6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+    volumes:
+      - mcp-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #3 — pgvector (Vector DB for RAG)
+  # --------------------------------------------------------------------------
+  pgvector:
+    image: pgvector/pgvector:${PGVECTOR_TAG:-pg16}
+    container_name: mcp-pgvector
+    restart: unless-stopped
+    networks:
+      - mcp-data-net
+      - mcp-ai-net
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_USER: ${PGVECTOR_USER}
+      POSTGRES_PASSWORD: ${PGVECTOR_PASSWORD}
+      POSTGRES_DB: ${PGVECTOR_DB}
+    volumes:
+      - mcp-pgvector-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGVECTOR_USER}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #4 — OpenBao (Secrets Management)
+  # --------------------------------------------------------------------------
+  openbao:
+    image: openbao/openbao:${OPENBAO_TAG:-2.1}
+    container_name: mcp-openbao
+    restart: unless-stopped
+    networks:
+      - mcp-sec-net
+      - mcp-app-net
+    expose:
+      - "8200"
+    environment:
+      BAO_DEV_ROOT_TOKEN_ID: ${OPENBAO_DEV_ROOT_TOKEN}
+      BAO_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+    cap_add:
+      - IPC_LOCK
+    healthcheck:
+      test: ["CMD", "bao", "status", "-address=http://127.0.0.1:8200"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #5 — nginx (Reverse Proxy + Dashboard)
+  # --------------------------------------------------------------------------
+  nginx:
+    image: nginx:${NGINX_TAG:-1.27-alpine}
+    container_name: mcp-nginx
+    restart: unless-stopped
+    networks:
+      - mcp-edge-net
+      - mcp-app-net
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../../config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../../config/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ../../config/nginx/dashboard:/usr/share/nginx/html/dashboard:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #6 — Keycloak (Identity & MFA)
+  # --------------------------------------------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_TAG:-26.0}
+    container_name: mcp-keycloak
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+      - mcp-data-net
+    expose:
+      - "8080"
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${KEYCLOAK_DB_NAME}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_RELATIVE_PATH: /auth
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET /auth/health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #7 — n8n (Workflow Automation)
+  # --------------------------------------------------------------------------
+  n8n:
+    image: n8nio/n8n:${N8N_TAG:-1.76.1}
+    container_name: mcp-n8n
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+      - mcp-data-net
+    expose:
+      - "5678"
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${N8N_DB_NAME}
+      DB_POSTGRESDB_USER: ${N8N_DB_USER}
+      DB_POSTGRESDB_PASSWORD: ${N8N_DB_PASSWORD}
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_HOST: ${MCP_HOST_IP}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://${MCP_HOST_IP}/auto
+      N8N_PATH: /auto
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+    volumes:
+      - mcp-n8n-data:/home/node/.n8n
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #8 — ntfy (Local Push Notifications)
+  # --------------------------------------------------------------------------
+  ntfy:
+    image: binwiederhier/ntfy:${NTFY_TAG:-latest}
+    container_name: mcp-ntfy
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+    expose:
+      - "80"
+    command: serve
+    volumes:
+      - ../../config/ntfy/server.yml:/etc/ntfy/server.yml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/v1/health >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+
+# ============================================================================
+# Networks (external — created by mcp-install.sh Phase 2)
+# ============================================================================
+networks:
+  mcp-edge-net:
+    external: true
+  mcp-app-net:
+    external: true
+  mcp-data-net:
+    external: true
+  mcp-sec-net:
+    external: true
+  mcp-ai-net:
+    external: true
+
+# ============================================================================
+# Volumes (named volumes for persistence)
+# ============================================================================
+volumes:
+  mcp-postgres-data:
+    external: true
+  mcp-redis-data:
+    external: true
+  mcp-pgvector-data:
+    external: true
+  mcp-keycloak-data:
+    external: true
+  mcp-n8n-data:
+    external: true

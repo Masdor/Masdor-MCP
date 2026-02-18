@@ -1,0 +1,36 @@
+# ============================================================================
+# MCP v7 — Grafana Datasource Provisioning
+# ============================================================================
+
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+    editable: false
+
+  - name: Zabbix
+    type: alexanderzobnin-zabbix-datasource
+    access: proxy
+    url: http://zabbix-web:8080/api_jsonrpc.php
+    editable: true
+    jsonData:
+      username: Admin
+      trends: true
+      trendsFrom: "7d"
+      trendsRange: "4d"
+      cacheTTL: "1h"
+
+  - name: PostgreSQL
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    editable: false
+    jsonData:
+      database: mcp_core
+      sslmode: disable
+    secureJsonData:
+      password: ${GRAFANA_DB_PASSWORD}

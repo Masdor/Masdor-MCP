@@ -1,0 +1,242 @@
+# ============================================================================
+# MCP v7 — Telemetry Stack (8 Containers: #17-#24)
+# ============================================================================
+# Zabbix Server, Zabbix Web, Grafana, Loki, Alloy, Uptime Kuma,
+# CrowdSec, Grafana Renderer
+# ============================================================================
+
+services:
+
+  # --------------------------------------------------------------------------
+  # #17 — Zabbix Server (Monitoring Engine)
+  # --------------------------------------------------------------------------
+  # RULE: NO bind-mount for config! Use env vars only (Tipps.md #15)
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:${ZABBIX_TAG:-7.0.0-alpine}
+    container_name: mcp-zabbix-server
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+      - mcp-data-net
+    expose:
+      - "10051"
+    environment:
+      DB_SERVER_HOST: postgres
+      DB_SERVER_PORT: 5432
+      POSTGRES_USER: ${ZABBIX_DB_USER}
+      POSTGRES_PASSWORD: ${ZABBIX_DB_PASSWORD}
+      POSTGRES_DB: ${ZABBIX_DB_NAME}
+      ZBX_SERVER_NAME: ${ZABBIX_SERVER_NAME:-MCP-Zabbix}
+    healthcheck:
+      test: ["CMD-SHELL", "zabbix_server -R config_cache_reload 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #18 — Zabbix Web (Web UI)
+  # RULE: Tag 7.0.0-alpine NOT 7.0-alpine (Tipps.md #1)
+  # --------------------------------------------------------------------------
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:${ZABBIX_TAG:-7.0.0-alpine}
+    container_name: mcp-zabbix-web
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+    expose:
+      - "8080"
+    environment:
+      DB_SERVER_HOST: postgres
+      DB_SERVER_PORT: 5432
+      POSTGRES_USER: ${ZABBIX_DB_USER}
+      POSTGRES_PASSWORD: ${ZABBIX_DB_PASSWORD}
+      POSTGRES_DB: ${ZABBIX_DB_NAME}
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_SERVER_NAME: ${ZABBIX_SERVER_NAME:-MCP-Zabbix}
+      PHP_TZ: ${MCP_TIMEZONE:-Europe/Berlin}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/ > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      zabbix-server:
+        condition: service_started
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #19 — Grafana (Dashboards & Visualization)
+  # --------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:${GRAFANA_TAG:-11.4.0}
+    container_name: mcp-grafana
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+      - mcp-data-net
+    expose:
+      - "3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
+      GF_SERVER_ROOT_URL: http://${MCP_HOST_IP}/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_DATABASE_TYPE: postgres
+      GF_DATABASE_HOST: postgres:5432
+      GF_DATABASE_NAME: ${GRAFANA_DB_NAME}
+      GF_DATABASE_USER: ${GRAFANA_DB_USER}
+      GF_DATABASE_PASSWORD: ${GRAFANA_DB_PASSWORD}
+      GF_DATABASE_SSL_MODE: disable
+      GF_RENDERING_SERVER_URL: http://grafana-renderer:8081/render
+      GF_RENDERING_CALLBACK_URL: http://grafana:3000/
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - mcp-grafana-data:/var/lib/grafana
+      - ../../config/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3000/api/health > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #20 — Loki (Log Aggregation)
+  # RULE: retention_period: 0 to prevent compactor crash (Tipps.md #14)
+  # --------------------------------------------------------------------------
+  loki:
+    image: grafana/loki:${LOKI_TAG:-3.3.2}
+    container_name: mcp-loki
+    restart: unless-stopped
+    networks:
+      - mcp-data-net
+    expose:
+      - "3100"
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - mcp-loki-data:/loki
+      - ../../config/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3100/ready 2>/dev/null | grep -q ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #21 — Alloy (Log/Metric Collector → Loki)
+  # --------------------------------------------------------------------------
+  alloy:
+    image: grafana/alloy:${ALLOY_TAG:-v1.5.1}
+    container_name: mcp-alloy
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+      - mcp-data-net
+    expose:
+      - "12345"
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/var/lib/alloy/data
+    volumes:
+      - ../../config/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/log:/var/log:ro
+    depends_on:
+      loki:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #22 — Uptime Kuma (Availability Monitoring)
+  # --------------------------------------------------------------------------
+  uptime-kuma:
+    image: louislam/uptime-kuma:${UPTIME_KUMA_TAG:-1}
+    container_name: mcp-uptime-kuma
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+    expose:
+      - "3001"
+    volumes:
+      - mcp-uptime-kuma-data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3001/ > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #23 — CrowdSec (Intrusion Detection — OFFLINE MODE)
+  # RULE: online_client.enabled: false (Tipps.md / Systemarchitektur)
+  # --------------------------------------------------------------------------
+  crowdsec:
+    image: crowdsecurity/crowdsec:${CROWDSEC_TAG:-latest}
+    container_name: mcp-crowdsec
+    restart: unless-stopped
+    networks:
+      - mcp-sec-net
+      - mcp-app-net
+    expose:
+      - "8080"
+    environment:
+      DISABLE_ONLINE_API: "true"
+      COLLECTIONS: "crowdsecurity/nginx crowdsecurity/linux"
+    volumes:
+      - ../../config/crowdsec/acquis.yml:/etc/crowdsec/acquis.yaml:ro
+      - /var/log:/var/log:ro
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #24 — Grafana Image Renderer (PDF/PNG Export)
+  # --------------------------------------------------------------------------
+  grafana-renderer:
+    image: grafana/grafana-image-renderer:${GRAFANA_RENDERER_TAG:-latest}
+    container_name: mcp-grafana-renderer
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+    expose:
+      - "8081"
+    environment:
+      ENABLE_METRICS: "true"
+    security_opt:
+      - no-new-privileges:true
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  mcp-app-net:
+    external: true
+  mcp-data-net:
+    external: true
+  mcp-sec-net:
+    external: true
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  mcp-grafana-data:
+    external: true
+  mcp-loki-data:
+    external: true
+  mcp-uptime-kuma-data:
+    external: true
