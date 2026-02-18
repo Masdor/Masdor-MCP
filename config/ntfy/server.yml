@@ -1,0 +1,23 @@
+# ============================================================================
+# MCP v7 — ntfy Server Configuration
+# ============================================================================
+# Local push notification service (replaces email in offline mode)
+# ============================================================================
+
+# Listen on all interfaces inside the container
+listen-http: ":80"
+
+# Base URL (used for notification links)
+base-url: "http://ntfy"
+
+# Data storage
+cache-file: "/var/cache/ntfy/cache.db"
+attachment-cache-dir: "/var/cache/ntfy/attachments"
+
+# Disable upstream server (fully offline)
+upstream-base-url: ""
+
+# Retention
+cache-duration: "72h"
+attachment-total-size-limit: "100M"
+attachment-file-size-limit: "10M"

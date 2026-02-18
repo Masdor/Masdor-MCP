@@ -1,0 +1,26 @@
+# ============================================================================
+# MCP v7 — LiteLLM Model Configuration
+# ============================================================================
+# Routes AI requests to the correct local model via Ollama
+# ============================================================================
+
+model_list:
+  - model_name: mistral
+    litellm_params:
+      model: ollama/mistral:7b-instruct-v0.3-q4_K_M
+      api_base: http://ollama:11434
+      stream: true
+
+  - model_name: llama3
+    litellm_params:
+      model: ollama/llama3:8b-instruct-q4_K_M
+      api_base: http://ollama:11434
+      stream: true
+
+  - model_name: nomic-embed
+    litellm_params:
+      model: ollama/nomic-embed-text
+      api_base: http://ollama:11434
+
+general_settings:
+  master_key: ${LITELLM_MASTER_KEY}

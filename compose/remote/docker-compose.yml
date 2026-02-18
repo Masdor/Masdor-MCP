@@ -1,0 +1,97 @@
+# ============================================================================
+# MCP v7 — Remote Stack (3 Containers: #25-#27)
+# ============================================================================
+# MeshCentral, Guacamole, Guacd
+# ============================================================================
+
+services:
+
+  # --------------------------------------------------------------------------
+  # #25 — MeshCentral (Remote Desktop & Management)
+  # RULE: Image from GHCR, not Docker Hub (Tipps.md #2)
+  # RULE: Uses HTTPS internally (Tipps.md #17)
+  # --------------------------------------------------------------------------
+  meshcentral:
+    image: ghcr.io/ylianst/meshcentral:${MESHCENTRAL_TAG:-latest}
+    container_name: mcp-meshcentral
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+    expose:
+      - "443"
+    volumes:
+      - mcp-meshcentral-data:/opt/meshcentral/meshcentral-data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -ksf https://127.0.0.1:443/ > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #26 — Guacamole (Web-based Remote Access)
+  # RULE: Context path is /guacamole/ not / (Tipps.md #16)
+  # --------------------------------------------------------------------------
+  guacamole:
+    image: guacamole/guacamole:${GUACAMOLE_TAG:-1.5.5}
+    container_name: mcp-guacamole
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+      - mcp-data-net
+    expose:
+      - "8080"
+    environment:
+      GUACD_HOSTNAME: guacd
+      GUACD_PORT: 4822
+      POSTGRESQL_HOSTNAME: postgres
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_DATABASE: ${GUACAMOLE_DB_NAME}
+      POSTGRESQL_USER: ${GUACAMOLE_DB_USER}
+      POSTGRESQL_PASSWORD: ${GUACAMOLE_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/guacamole/ > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      - guacd
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #27 — Guacd (Guacamole Proxy Daemon)
+  # --------------------------------------------------------------------------
+  guacd:
+    image: guacamole/guacd:${GUACD_TAG:-1.5.5}
+    container_name: mcp-guacd
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+    expose:
+      - "4822"
+    volumes:
+      - mcp-guacamole-data:/drive
+    security_opt:
+      - no-new-privileges:true
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  mcp-app-net:
+    external: true
+  mcp-data-net:
+    external: true
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  mcp-meshcentral-data:
+    external: true
+  mcp-guacamole-data:
+    external: true

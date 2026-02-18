@@ -1,0 +1,330 @@
+# ============================================================================
+# MCP v7 — Ops Stack (8 Containers + 1 Init: #9-#16)
+# ============================================================================
+# Zammad (init + rails + websocket + worker), Elasticsearch, Memcached,
+# BookStack + MariaDB, Vaultwarden, Portainer, DIUN
+# ============================================================================
+
+services:
+
+  # --------------------------------------------------------------------------
+  # Zammad Init (one-shot — runs DB migrations then exits)
+  # --------------------------------------------------------------------------
+  zammad-init:
+    image: ghcr.io/zammad/zammad:${ZAMMAD_TAG:-6.4.1}
+    container_name: mcp-zammad-init
+    networks:
+      - mcp-app-net
+      - mcp-data-net
+    environment:
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_USER: ${ZAMMAD_DB_USER}
+      POSTGRESQL_PASS: ${ZAMMAD_DB_PASSWORD}
+      POSTGRESQL_DB: ${ZAMMAD_DB_NAME}
+      POSTGRESQL_OPTIONS: ""
+      ELASTICSEARCH_HOST: elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      ELASTICSEARCH_SCHEMA: http
+      MEMCACHE_SERVERS: memcached:11211
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      RAILS_SERVE_STATIC_FILES: "true"
+    command: ["zammad", "run", "rake"]
+    volumes:
+      - mcp-zammad-data:/opt/zammad/storage
+    restart: "no"
+
+  # --------------------------------------------------------------------------
+  # #9 — Zammad Rails (Web UI)
+  # --------------------------------------------------------------------------
+  zammad-rails:
+    image: ghcr.io/zammad/zammad:${ZAMMAD_TAG:-6.4.1}
+    container_name: mcp-zammad-rails
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+      - mcp-data-net
+    expose:
+      - "3000"
+    environment:
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_USER: ${ZAMMAD_DB_USER}
+      POSTGRESQL_PASS: ${ZAMMAD_DB_PASSWORD}
+      POSTGRESQL_DB: ${ZAMMAD_DB_NAME}
+      POSTGRESQL_OPTIONS: ""
+      ELASTICSEARCH_HOST: elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      ELASTICSEARCH_SCHEMA: http
+      MEMCACHE_SERVERS: memcached:11211
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      RAILS_SERVE_STATIC_FILES: "true"
+    command: ["zammad", "run", "web"]
+    volumes:
+      - mcp-zammad-data:/opt/zammad/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3000/ > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    depends_on:
+      zammad-init:
+        condition: service_completed_successfully
+      elasticsearch:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #10 — Zammad WebSocket
+  # --------------------------------------------------------------------------
+  zammad-websocket:
+    image: ghcr.io/zammad/zammad:${ZAMMAD_TAG:-6.4.1}
+    container_name: mcp-zammad-websocket
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+    expose:
+      - "6042"
+    environment:
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_USER: ${ZAMMAD_DB_USER}
+      POSTGRESQL_PASS: ${ZAMMAD_DB_PASSWORD}
+      POSTGRESQL_DB: ${ZAMMAD_DB_NAME}
+      POSTGRESQL_OPTIONS: ""
+      MEMCACHE_SERVERS: memcached:11211
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+    command: ["zammad", "run", "websocket"]
+    volumes:
+      - mcp-zammad-data:/opt/zammad/storage
+    depends_on:
+      zammad-init:
+        condition: service_completed_successfully
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #11 — Zammad Worker (Background Jobs)
+  # --------------------------------------------------------------------------
+  zammad-worker:
+    image: ghcr.io/zammad/zammad:${ZAMMAD_TAG:-6.4.1}
+    container_name: mcp-zammad-worker
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+      - mcp-data-net
+    environment:
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_USER: ${ZAMMAD_DB_USER}
+      POSTGRESQL_PASS: ${ZAMMAD_DB_PASSWORD}
+      POSTGRESQL_DB: ${ZAMMAD_DB_NAME}
+      POSTGRESQL_OPTIONS: ""
+      ELASTICSEARCH_HOST: elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      ELASTICSEARCH_SCHEMA: http
+      MEMCACHE_SERVERS: memcached:11211
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+    command: ["zammad", "run", "worker"]
+    volumes:
+      - mcp-zammad-data:/opt/zammad/storage
+    depends_on:
+      zammad-init:
+        condition: service_completed_successfully
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #12 — Elasticsearch (Zammad Full-Text Search)
+  # --------------------------------------------------------------------------
+  elasticsearch:
+    image: elasticsearch:${ELASTICSEARCH_TAG:-8.17.0}
+    container_name: mcp-elasticsearch
+    restart: unless-stopped
+    networks:
+      - mcp-data-net
+    expose:
+      - "9200"
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms512m -Xmx512m}
+    volumes:
+      - mcp-elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # Memcached (Zammad session cache)
+  # --------------------------------------------------------------------------
+  memcached:
+    image: memcached:${MEMCACHED_TAG:-1.6-alpine}
+    container_name: mcp-zammad-memcached
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+    expose:
+      - "11211"
+    command: memcached -m 64
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # BookStack MariaDB (dedicated DB for BookStack)
+  # --------------------------------------------------------------------------
+  bookstack-db:
+    image: mariadb:${MARIADB_TAG:-11.6}
+    container_name: mcp-bookstack-db
+    restart: unless-stopped
+    networks:
+      - mcp-data-net
+    expose:
+      - "3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${BOOKSTACK_MARIADB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${BOOKSTACK_DB_NAME}
+      MYSQL_USER: ${BOOKSTACK_DB_USER}
+      MYSQL_PASSWORD: ${BOOKSTACK_DB_PASSWORD}
+    volumes:
+      - mcp-bookstack-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #13 — BookStack (Wiki & Documentation)
+  # --------------------------------------------------------------------------
+  bookstack:
+    image: lscr.io/linuxserver/bookstack:${BOOKSTACK_TAG:-24.12.1}
+    container_name: mcp-bookstack
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+      - mcp-data-net
+    expose:
+      - "80"
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: ${MCP_TIMEZONE:-Europe/Berlin}
+      APP_URL: http://${MCP_HOST_IP}/wiki
+      DB_HOST: bookstack-db
+      DB_PORT: 3306
+      DB_DATABASE: ${BOOKSTACK_DB_NAME}
+      DB_USERNAME: ${BOOKSTACK_DB_USER}
+      DB_PASSWORD: ${BOOKSTACK_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:80/login > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      bookstack-db:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #14 — Vaultwarden (Password Manager)
+  # --------------------------------------------------------------------------
+  vaultwarden:
+    image: vaultwarden/server:${VAULTWARDEN_TAG:-1.32.5}
+    container_name: mcp-vaultwarden
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+    expose:
+      - "80"
+    environment:
+      ADMIN_TOKEN: ${VAULTWARDEN_ADMIN_TOKEN}
+      DOMAIN: http://${MCP_HOST_IP}/vault
+      SIGNUPS_ALLOWED: "true"
+      WEBSOCKET_ENABLED: "true"
+    volumes:
+      - mcp-vaultwarden-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:80/alive > /dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #15 — Portainer (Docker Management UI)
+  # --------------------------------------------------------------------------
+  portainer:
+    image: portainer/portainer-ce:${PORTAINER_TAG:-2.21.5}
+    container_name: mcp-portainer
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+    expose:
+      - "9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - mcp-portainer-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/api/system/status > /dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #16 — DIUN (Docker Image Update Notifier)
+  # --------------------------------------------------------------------------
+  diun:
+    image: crazymax/diun:${DIUN_TAG:-4.28}
+    container_name: mcp-diun
+    restart: unless-stopped
+    networks:
+      - mcp-app-net
+    environment:
+      TZ: ${MCP_TIMEZONE:-Europe/Berlin}
+      DIUN_WATCH_SCHEDULE: "0 */6 * * *"
+      DIUN_PROVIDERS_DOCKER: "true"
+      DIUN_PROVIDERS_DOCKER_WATCHBYDEFAULT: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    security_opt:
+      - no-new-privileges:true
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  mcp-app-net:
+    external: true
+  mcp-data-net:
+    external: true
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  mcp-zammad-data:
+    external: true
+  mcp-elasticsearch-data:
+    external: true
+  mcp-bookstack-data:
+    external: true
+  mcp-vaultwarden-data:
+    external: true
+  mcp-portainer-data:
+    external: true

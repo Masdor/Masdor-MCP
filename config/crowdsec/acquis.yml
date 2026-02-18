@@ -1,0 +1,21 @@
+# ============================================================================
+# MCP v7 — CrowdSec Log Acquisition
+# ============================================================================
+# Defines which log sources CrowdSec monitors for intrusion detection
+# RULE: Offline mode — no cloud blocklists
+# ============================================================================
+
+# nginx access logs
+filenames:
+  - /var/log/nginx/access.log
+labels:
+  type: nginx
+
+---
+
+# System auth logs (SSH, sudo)
+filenames:
+  - /var/log/auth.log
+  - /var/log/syslog
+labels:
+  type: syslog

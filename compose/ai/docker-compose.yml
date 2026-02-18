@@ -1,0 +1,189 @@
+# ============================================================================
+# MCP v7 — AI Stack (5 Containers: #28-#32)
+# ============================================================================
+# Ollama, LiteLLM, LangChain Worker, AI Gateway, Redis Queue
+# ============================================================================
+# RULE: AI Gateway NEVER exposed publicly — internal only
+# RULE: Two separate Redis instances (mcp-redis = cache, mcp-redis-queue = AI jobs)
+# ============================================================================
+
+services:
+
+  # --------------------------------------------------------------------------
+  # #28 — Ollama (LLM Inference — GPU)
+  # --------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:${OLLAMA_TAG:-latest}
+    container_name: mcp-ollama
+    restart: unless-stopped
+    networks:
+      - mcp-ai-net
+    expose:
+      - "11434"
+    volumes:
+      - mcp-ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:11434/ > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    # GPU passthrough (uncomment if NVIDIA GPU available)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #29 — LiteLLM (AI Gateway / Model Router)
+  # --------------------------------------------------------------------------
+  litellm:
+    image: ghcr.io/berriai/litellm:${LITELLM_TAG:-latest}
+    container_name: mcp-litellm
+    restart: unless-stopped
+    networks:
+      - mcp-ai-net
+      - mcp-app-net
+    expose:
+      - "4000"
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+    command: --config /app/config.yaml
+    volumes:
+      - ../../config/ai/models.yml:/app/config.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:4000/health > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      ollama:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #30 — LangChain Worker (RAG Pipeline)
+  # --------------------------------------------------------------------------
+  langchain:
+    image: mcp-langchain:latest
+    container_name: mcp-langchain
+    restart: unless-stopped
+    build:
+      context: ../../containers/langchain-worker
+      dockerfile: Dockerfile
+    networks:
+      - mcp-ai-net
+      - mcp-data-net
+    environment:
+      PGVECTOR_HOST: pgvector
+      PGVECTOR_PORT: 5432
+      PGVECTOR_USER: ${PGVECTOR_USER}
+      PGVECTOR_PASSWORD: ${PGVECTOR_PASSWORD}
+      PGVECTOR_DB: ${PGVECTOR_DB}
+      OLLAMA_HOST: http://ollama:11434
+      REDIS_QUEUE_HOST: redis-queue
+      REDIS_QUEUE_PORT: 6379
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+    depends_on:
+      ollama:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #31 — AI Gateway (Central AI API — FastAPI)
+  # RULE: NEVER expose to public — internal networks only
+  # --------------------------------------------------------------------------
+  ai-gateway:
+    image: mcp-ai-gateway:latest
+    container_name: mcp-ai-gateway
+    restart: unless-stopped
+    build:
+      context: ../../containers/ai-gateway
+      dockerfile: Dockerfile
+    networks:
+      - mcp-ai-net
+      - mcp-app-net
+    expose:
+      - "8000"
+    environment:
+      AI_GATEWAY_SECRET: ${AI_GATEWAY_SECRET}
+      OLLAMA_HOST: http://ollama:11434
+      LITELLM_HOST: http://litellm:4000
+      PGVECTOR_HOST: pgvector
+      PGVECTOR_PORT: 5432
+      PGVECTOR_USER: ${PGVECTOR_USER}
+      PGVECTOR_PASSWORD: ${PGVECTOR_PASSWORD}
+      PGVECTOR_DB: ${PGVECTOR_DB}
+      REDIS_QUEUE_HOST: redis-queue
+      REDIS_QUEUE_PORT: 6379
+      ZAMMAD_URL: http://zammad-rails:3000
+      ZAMMAD_TOKEN: ${ZAMMAD_AI_TOKEN}
+      NTFY_URL: http://ntfy:80
+      PRIMARY_MODEL: ${OLLAMA_MODEL:-mistral:7b-instruct-v0.3-q4_K_M}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8000/health > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      ollama:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # #32 — Redis Queue (Dedicated AI Job Queue)
+  # RULE: Separate from mcp-redis (#2)! This is AI-only.
+  # --------------------------------------------------------------------------
+  redis-queue:
+    image: redis:${REDIS_QUEUE_TAG:-7-alpine}
+    container_name: mcp-redis-queue
+    restart: unless-stopped
+    networks:
+      - mcp-ai-net
+    expose:
+      - "6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - mcp-redis-queue-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  mcp-ai-net:
+    external: true
+  mcp-app-net:
+    external: true
+  mcp-data-net:
+    external: true
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  mcp-ollama-data:
+    external: true
+  mcp-redis-queue-data:
+    external: true

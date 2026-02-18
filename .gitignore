@@ -1,0 +1,25 @@
+# Environment (contains secrets)
+.env
+
+# Runtime logs
+logs/mcp-install-error-*.log
+
+# Offline deployment artifacts
+images/*.tar.gz
+images/*.tar
+models/*.tar.gz
+models/*.tar
+
+# Docker volumes (if local)
+volumes/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
