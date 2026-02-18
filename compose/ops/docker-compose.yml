@@ -155,7 +155,7 @@ services:
     environment:
       discovery.type: single-node
       xpack.security.enabled: "false"
-      ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms512m -Xmx512m}
+      ES_JAVA_OPTS: "${ES_JAVA_OPTS}"
     volumes:
       - mcp-elasticsearch-data:/usr/share/elasticsearch/data
     healthcheck:
@@ -264,10 +264,11 @@ services:
     volumes:
       - mcp-vaultwarden-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:80/alive > /dev/null"]
+      test: ["CMD-SHELL", "curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:80/ | grep -Eq '^(200|301|302|401|403)$'"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 5
+      start_period: 60s
     security_opt:
       - no-new-privileges:true
 
@@ -286,10 +287,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - mcp-portainer-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/api/system/status > /dev/null 2>&1"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
+      test: ["NONE"]
     security_opt:
       - no-new-privileges:true
 

@@ -132,6 +132,15 @@ phase1_preflight() {
     source "${PROJECT_DIR}/.env"
     set +a
 
+    # Auto-generate BookStack APP_KEY if placeholder
+    if grep -q "BOOKSTACK_APP_KEY=CHANGE_ME" "${PROJECT_DIR}/.env" 2>/dev/null; then
+        NEW_KEY=$(openssl rand -base64 32)
+        sed -i "s|BOOKSTACK_APP_KEY=CHANGE_ME.*|BOOKSTACK_APP_KEY=base64:${NEW_KEY}|" "${PROJECT_DIR}/.env"
+        log_ok "BookStack APP_KEY auto-generated"
+        # Re-source .env with new key
+        set -a; source "${PROJECT_DIR}/.env"; set +a
+    fi
+
     # Check for CHANGE_ME values
     if grep -q "CHANGE_ME" "${PROJECT_DIR}/.env"; then
         log_warn "Found CHANGE_ME values in .env — update all passwords before production!"
@@ -227,7 +236,7 @@ phase2_environment() {
         "mcp-elasticsearch-data" "mcp-zammad-data" "mcp-zammad-tmp"
         "mcp-bookstack-data" "mcp-vaultwarden-data" "mcp-portainer-data"
         # Telemetry Stack
-        "mcp-grafana-data" "mcp-loki-data" "mcp-uptime-kuma-data"
+        "mcp-grafana-data" "mcp-loki-data" "mcp-uptime-kuma-data" "mcp-crowdsec-data"
         # Remote Stack
         "mcp-meshcentral-data" "mcp-guacamole-data"
         # AI Stack
@@ -243,7 +252,7 @@ phase2_environment() {
         fi
     done
 
-    log_ok "All 19 Docker volumes created"
+    log_ok "All 20 Docker volumes created"
 
     # Create logs directory
     mkdir -p "${PROJECT_DIR}/logs"
@@ -259,7 +268,7 @@ phase2_environment() {
     )
     for cf in "${compose_files[@]}"; do
         if [ -f "${PROJECT_DIR}/${cf}" ]; then
-            if docker compose -f "${PROJECT_DIR}/${cf}" config --quiet 2>/dev/null; then
+            if docker compose -p "${COMPOSE_PROJECT_NAME:-mcp}" --env-file "${PROJECT_DIR}/.env" -f "${PROJECT_DIR}/${cf}" config --quiet 2>/dev/null; then
                 log_ok "YAML valid: ${cf}"
             else
                 gate_fail "phase2" "YAML validation failed: ${cf}" "Run: docker compose -f ${cf} config"
@@ -279,7 +288,7 @@ phase3_core() {
     echo "----------------------------------------"
 
     cd "$PROJECT_DIR"
-    docker compose --env-file .env -f compose/core/docker-compose.yml up -d
+    docker compose -p "${COMPOSE_PROJECT_NAME:-mcp}" --env-file .env -f compose/core/docker-compose.yml up -d
 
     log_info "Waiting for Core containers to become healthy..."
 
@@ -305,7 +314,7 @@ phase4_ops() {
     echo "----------------------------------------"
 
     cd "$PROJECT_DIR"
-    docker compose --env-file .env -f compose/ops/docker-compose.yml up -d
+    docker compose -p "${COMPOSE_PROJECT_NAME:-mcp}" --env-file .env -f compose/ops/docker-compose.yml up -d
 
     log_info "Waiting for Ops containers..."
 
@@ -328,7 +337,7 @@ phase4_ops() {
         elapsed=$((elapsed + 10))
     done
 
-    local ops_containers=("mcp-zammad-rails" "mcp-elasticsearch" "mcp-bookstack" "mcp-vaultwarden" "mcp-portainer")
+    local ops_containers=("mcp-zammad-rails" "mcp-elasticsearch" "mcp-bookstack" "mcp-vaultwarden")
     for container in "${ops_containers[@]}"; do
         if wait_healthy "$container" 180; then
             log_ok "${container} is healthy"
@@ -336,6 +345,13 @@ phase4_ops() {
             gate_fail "phase4" "${container} not healthy" "Check logs: docker logs ${container} --tail 100"
         fi
     done
+
+    # Portainer has no /bin/sh — check running instead of healthy
+    if docker ps --filter "name=mcp-portainer" --filter "status=running" -q | grep -q .; then
+        log_ok "mcp-portainer is running"
+    else
+        gate_fail "phase4" "mcp-portainer not running" "Check logs: docker logs mcp-portainer --tail 100"
+    fi
 
     log_ok "Phase 4: Ops Stack PASSED"
     echo ""
@@ -349,7 +365,7 @@ phase5_telemetry() {
     echo "----------------------------------------"
 
     cd "$PROJECT_DIR"
-    docker compose --env-file .env -f compose/telemetry/docker-compose.yml up -d
+    docker compose -p "${COMPOSE_PROJECT_NAME:-mcp}" --env-file .env -f compose/telemetry/docker-compose.yml up -d
 
     log_info "Waiting for Telemetry containers..."
 
@@ -376,7 +392,7 @@ phase6_ai() {
     cd "$PROJECT_DIR"
 
     # Start Ollama first to load models
-    docker compose --env-file .env -f compose/ai/docker-compose.yml up -d ollama redis-queue
+    docker compose -p "${COMPOSE_PROJECT_NAME:-mcp}" --env-file .env -f compose/ai/docker-compose.yml up -d ollama redis-queue
     log_info "Waiting for Ollama to start..."
     sleep 30
 
@@ -386,7 +402,7 @@ phase6_ai() {
     docker exec mcp-ollama ollama pull "${EMBEDDING_MODEL:-nomic-embed-text}" || log_warn "Embedding model pull failed"
 
     # Start remaining AI services
-    docker compose --env-file .env -f compose/ai/docker-compose.yml up -d
+    docker compose -p "${COMPOSE_PROJECT_NAME:-mcp}" --env-file .env -f compose/ai/docker-compose.yml up -d
 
     log_info "Waiting for AI containers..."
 
@@ -413,6 +429,8 @@ main() {
     echo "  $(date)"
     echo "============================================"
     echo ""
+
+    export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-mcp}"
 
     local start_phase=1
     local only_phase=0
