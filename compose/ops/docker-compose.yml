@@ -29,9 +29,10 @@ services:
       MEMCACHE_SERVERS: memcached:11211
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       RAILS_SERVE_STATIC_FILES: "true"
-    command: ["zammad", "run", "rake"]
+    command: ["zammad-init"]
     volumes:
       - mcp-zammad-data:/opt/zammad/storage
+      - mcp-zammad-tmp:/opt/zammad/tmp
     restart: "no"
 
   # --------------------------------------------------------------------------
@@ -59,9 +60,10 @@ services:
       MEMCACHE_SERVERS: memcached:11211
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       RAILS_SERVE_STATIC_FILES: "true"
-    command: ["zammad", "run", "web"]
+    command: ["zammad-railsserver"]
     volumes:
       - mcp-zammad-data:/opt/zammad/storage
+      - mcp-zammad-tmp:/opt/zammad/tmp
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3000/ > /dev/null"]
       interval: 30s
@@ -85,6 +87,7 @@ services:
     restart: unless-stopped
     networks:
       - mcp-app-net
+      - mcp-data-net
     expose:
       - "6042"
     environment:
@@ -96,9 +99,10 @@ services:
       POSTGRESQL_OPTIONS: ""
       MEMCACHE_SERVERS: memcached:11211
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-    command: ["zammad", "run", "websocket"]
+    command: ["zammad-websocket"]
     volumes:
       - mcp-zammad-data:/opt/zammad/storage
+      - mcp-zammad-tmp:/opt/zammad/tmp
     depends_on:
       zammad-init:
         condition: service_completed_successfully
@@ -106,11 +110,11 @@ services:
       - no-new-privileges:true
 
   # --------------------------------------------------------------------------
-  # #11 — Zammad Worker (Background Jobs)
+  # #11 — Zammad Scheduler (Background Jobs)
   # --------------------------------------------------------------------------
-  zammad-worker:
+  zammad-scheduler:
     image: ghcr.io/zammad/zammad:${ZAMMAD_TAG:-6.4.1}
-    container_name: mcp-zammad-worker
+    container_name: mcp-zammad-scheduler
     restart: unless-stopped
     networks:
       - mcp-app-net
@@ -127,9 +131,10 @@ services:
       ELASTICSEARCH_SCHEMA: http
       MEMCACHE_SERVERS: memcached:11211
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-    command: ["zammad", "run", "worker"]
+    command: ["zammad-scheduler"]
     volumes:
       - mcp-zammad-data:/opt/zammad/storage
+      - mcp-zammad-tmp:/opt/zammad/tmp
     depends_on:
       zammad-init:
         condition: service_completed_successfully
@@ -171,6 +176,7 @@ services:
     restart: unless-stopped
     networks:
       - mcp-app-net
+      - mcp-data-net
     expose:
       - "11211"
     command: memcached -m 64
@@ -220,6 +226,7 @@ services:
       PUID: 1000
       PGID: 1000
       TZ: ${MCP_TIMEZONE:-Europe/Berlin}
+      APP_KEY: ${BOOKSTACK_APP_KEY}
       APP_URL: http://${MCP_HOST_IP}/wiki
       DB_HOST: bookstack-db
       DB_PORT: 3306
@@ -319,6 +326,8 @@ networks:
 # ============================================================================
 volumes:
   mcp-zammad-data:
+    external: true
+  mcp-zammad-tmp:
     external: true
   mcp-elasticsearch-data:
     external: true

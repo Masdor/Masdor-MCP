@@ -125,6 +125,8 @@ services:
     networks:
       - mcp-edge-net
       - mcp-app-net
+      - mcp-data-net
+      - mcp-sec-net
     ports:
       - "80:80"
       - "443:443"
@@ -166,7 +168,7 @@ services:
       KC_PROXY_HEADERS: xforwarded
       KC_HTTP_RELATIVE_PATH: /auth
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET /auth/health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200'"]
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET /auth/health/ready HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n' >&3 && timeout 2 cat <&3 | grep -q '200' || exec 3<>/dev/tcp/127.0.0.1/8080"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -236,6 +238,7 @@ services:
       - "80"
     command: serve
     volumes:
+      - mcp-ntfy-cache:/var/cache/ntfy
       - ../../config/ntfy/server.yml:/etc/ntfy/server.yml:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/v1/health >/dev/null 2>&1"]
@@ -273,4 +276,6 @@ volumes:
   mcp-keycloak-data:
     external: true
   mcp-n8n-data:
+    external: true
+  mcp-ntfy-cache:
     external: true

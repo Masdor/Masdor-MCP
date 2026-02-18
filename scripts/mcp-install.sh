@@ -156,6 +156,20 @@ phase1_preflight() {
         log_ok "Disk: ${free_disk_gb} GB free"
     fi
 
+    # Sysctl tuning (Redis vm.overcommit_memory — P1-005)
+    local overcommit
+    overcommit=$(cat /proc/sys/vm/overcommit_memory 2>/dev/null || echo "0")
+    if [ "$overcommit" != "1" ]; then
+        log_info "Setting vm.overcommit_memory=1 (required by Redis)"
+        sysctl -w vm.overcommit_memory=1 >/dev/null 2>&1 || log_warn "Could not set vm.overcommit_memory (not root?)"
+        if ! grep -q "vm.overcommit_memory" /etc/sysctl.conf 2>/dev/null; then
+            echo "vm.overcommit_memory = 1" >> /etc/sysctl.conf 2>/dev/null || true
+        fi
+        log_ok "vm.overcommit_memory=1 set"
+    else
+        log_ok "vm.overcommit_memory already set to 1"
+    fi
+
     # GPU check (optional — warn only)
     if command -v nvidia-smi &>/dev/null; then
         if nvidia-smi &>/dev/null; then
@@ -204,13 +218,19 @@ phase2_environment() {
 
     log_ok "All 5 Docker networks created"
 
-    # Create volumes
+    # Create ALL volumes upfront for ALL phases (P2-001)
     local volumes=(
+        # Core Stack
         "mcp-postgres-data" "mcp-pgvector-data" "mcp-redis-data"
-        "mcp-elasticsearch-data" "mcp-keycloak-data" "mcp-n8n-data"
-        "mcp-zammad-data" "mcp-bookstack-data" "mcp-vaultwarden-data"
+        "mcp-keycloak-data" "mcp-n8n-data" "mcp-ntfy-cache"
+        # Ops Stack
+        "mcp-elasticsearch-data" "mcp-zammad-data" "mcp-zammad-tmp"
+        "mcp-bookstack-data" "mcp-vaultwarden-data" "mcp-portainer-data"
+        # Telemetry Stack
         "mcp-grafana-data" "mcp-loki-data" "mcp-uptime-kuma-data"
-        "mcp-meshcentral-data" "mcp-guacamole-data" "mcp-portainer-data"
+        # Remote Stack
+        "mcp-meshcentral-data" "mcp-guacamole-data"
+        # AI Stack
         "mcp-ollama-data" "mcp-redis-queue-data"
     )
 
@@ -223,10 +243,29 @@ phase2_environment() {
         fi
     done
 
-    log_ok "All 17 Docker volumes created"
+    log_ok "All 19 Docker volumes created"
 
     # Create logs directory
     mkdir -p "${PROJECT_DIR}/logs"
+
+    # YAML validation gate — validate all compose files before any deployment
+    log_info "Validating Docker Compose files..."
+    local compose_files=(
+        "compose/core/docker-compose.yml"
+        "compose/ops/docker-compose.yml"
+        "compose/telemetry/docker-compose.yml"
+        "compose/remote/docker-compose.yml"
+        "compose/ai/docker-compose.yml"
+    )
+    for cf in "${compose_files[@]}"; do
+        if [ -f "${PROJECT_DIR}/${cf}" ]; then
+            if docker compose -f "${PROJECT_DIR}/${cf}" config --quiet 2>/dev/null; then
+                log_ok "YAML valid: ${cf}"
+            else
+                gate_fail "phase2" "YAML validation failed: ${cf}" "Run: docker compose -f ${cf} config"
+            fi
+        fi
+    done
 
     log_ok "Phase 2: Environment Setup PASSED"
     echo ""

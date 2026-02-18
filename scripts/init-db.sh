@@ -102,12 +102,11 @@ create_role "guacamole" "${GUACAMOLE_DB_PASSWORD}"
 create_database "guacamole" "guacamole"
 
 # ---------------------------------------------------------------------------
-# 8. pgvector extensions (for the main DB used by RAG)
+# 8. Note: pgvector extension is handled by the dedicated mcp-pgvector
+#    container (pgvector/pgvector image), NOT by this postgres instance.
+#    DO NOT run CREATE EXTENSION vector here — it will fail (P1-004).
 # ---------------------------------------------------------------------------
-echo "[8/8] Enabling pgvector extension on mcp_core..."
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
-    CREATE EXTENSION IF NOT EXISTS vector;
-EOSQL
+echo "[8/8] Skipping pgvector (handled by mcp-pgvector container)"
 
 echo "============================================"
 echo "  MCP v7 — Database Initialization COMPLETE"
