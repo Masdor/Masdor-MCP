@@ -1,0 +1,473 @@
+# MCP v7 — Repair-Analyse & Batch R1
+**Erstellt:** 2026-02-18 | **Analyst:** Claude Chat (Programmier-Assistent) | **Admin:** Moustafa
+
+---
+
+## 1. Projekt-Verständnis (Zusammenfassung)
+
+**Masdor-MCP v7** ist ein offline-first AI-powered IT Operations Center mit:
+- **33 Container** (32 long-running + 1 init) über 5 isolierte Docker-Netzwerke
+- **5 Compose-Stacks:** Core (8) → Ops (8+1 init) → Telemetry (8) → Remote (3) → AI (5)
+- **Phasen-Installation:** mcp-install.sh mit Gates pro Phase
+- **3 Test-Suites:** smoke-test.sh, security-test.sh, ai-pipeline-test.sh
+
+---
+
+## 2. FIX-Status: MCP_Code_Repair_Prompt.md vs. aktueller Code
+
+### ✅ Bereits repariert (kein Handlungsbedarf)
+
+| FIX | Beschreibung | Status |
+|-----|-------------|--------|
+| FIX-010 | Zammad Netzwerk (Redis nicht erreichbar) | ✅ Alle 4 Zammad-Services haben `mcp-app-net` + `mcp-data-net` |
+| FIX-011 | Zammad puma.pid (tmp Volume) | ✅ `mcp-zammad-tmp` Volume ist bei rails/websocket/scheduler gemountet |
+| FIX-013 | nginx Upstream-Abhängigkeit | ✅ `resolver 127.0.0.11` + `set $upstream_xxx` Pattern ist korrekt umgesetzt |
+| FIX-014 | pgvector Extension auf falschem Container | ✅ init-db.sh überspringt pgvector explizit (Zeile 107-109) |
+| FIX-015 | Redis vm.overcommit_memory | ✅ mcp-install.sh Phase 1 setzt vm.overcommit_memory=1 (Zeile 159-171) |
+| FIX-016 | Externe Volumes fehlen | ✅ (teilweise) Phase 2 erstellt 19 Volumes — aber `mcp-crowdsec-data` fehlt |
+| FIX-017 | YAML-Struktur | ✅ Alle Compose-Dateien haben korrekte Einzelstruktur |
+
+### ❌ NOCH OFFEN — Bugs die repariert werden müssen
+
+| FIX | Beschreibung | Schwere | Datei(en) |
+|-----|-------------|---------|-----------|
+| FIX-001 | ES_JAVA_OPTS ohne Quotes | 🔴 Kritisch | `.env.example` Z.93, `compose/ops` Z.158 |
+| FIX-002 | BookStack APP_KEY nicht auto-generiert | 🟡 Mittel | `scripts/mcp-install.sh` |
+| FIX-003 | Vaultwarden Healthcheck `/alive` + kein `start_period` | 🔴 Kritisch | `compose/ops` Z.267 |
+| FIX-004 | Portainer Healthcheck `wget` (nicht verfügbar) | 🔴 Kritisch | `compose/ops` Z.289, `tests/smoke-test.sh` Z.98 |
+| FIX-005 | Zabbix-Web fehlt `mcp-data-net` | 🔴 Kritisch | `compose/telemetry` Z.47-48 |
+| FIX-006 | CrowdSec Volume `/var/lib/crowdsec/data` fehlt | 🔴 Kritisch | `compose/telemetry` Z.201, `scripts/mcp-install.sh` |
+| FIX-007 | LiteLLM `platform: linux/amd64` fehlt | 🔴 Kritisch | `compose/ai` Z.45-46 |
+| FIX-008 | Ollama Healthcheck zu aggressiv, blockiert AI-Stack | 🔴 Kritisch | `compose/ai` Z.26, Z.66-67, Z.94-98, Z.140-144 |
+| FIX-009 | Orphan-Warnungen (Projektname) | 🟡 Mittel | `scripts/mcp-install.sh` |
+| FIX-012 | Zammad Commands ggf. falsch für 6.4.1 | 🟡 Verify | `compose/ops` Z.32, Z.63, Z.102, Z.134 |
+
+---
+
+## 3. ZUSÄTZLICHE Probleme (über Repair-Prompt hinaus gefunden)
+
+| # | Beschreibung | Schwere | Datei(en) |
+|---|-------------|---------|-----------|
+| ADD-001 | `mcp-crowdsec-data` fehlt in Volume-Liste (Phase 2) | 🔴 Kritisch | `scripts/mcp-install.sh` Z.222-234 |
+| ADD-002 | ES_JAVA_OPTS Compose Default mit Leerzeichen riskant | 🔴 Kritisch | `compose/ops` Z.158 |
+| ADD-003 | Portainer: Install-Script prüft auf `healthy` (unmöglich) | 🔴 Kritisch | `scripts/mcp-install.sh` Z.331 |
+| ADD-004 | Security-Test hardcodiert `project=mcp` Filter | 🟡 Mittel | `tests/security-test.sh` Z.39, Z.75 |
+| ADD-005 | Keycloak Healthcheck komplex & fragil | 🟡 Mittel | `compose/core` Z.171 |
+| ADD-006 | Zabbix-Server `DB_SERVER_HOST: postgres` (Service nicht im selben Stack) | 🟡 Info | `compose/telemetry` Z.24 |
+| ADD-007 | Makefile fehlende `--project-name` Option | 🟢 Niedrig | `Makefile` |
+| ADD-008 | DIUN fehlt `mcp-diun-data` Volume (Daten nicht persistent) | 🟢 Niedrig | `compose/ops` Z.299-313 |
+| ADD-009 | Keycloak `mcp-keycloak-data` Volume erstellt aber nie gemountet | 🟢 Info | `compose/core`, `scripts/mcp-install.sh` |
+| ADD-010 | Ollama-Modell Name in .env.example zu spezifisch | 🟢 Info | `.env.example` Z.113 |
+
+---
+
+## 4. BATCH R1 — Konkrete Reparatur-Anweisungen
+
+### R1-01 — .env.example: ES_JAVA_OPTS quoten (FIX-001)
+
+**Datei:** `.env.example` Zeile 93
+
+**Vorher:**
+```
+ES_JAVA_OPTS=-Xms512m -Xmx512m
+```
+
+**Nachher:**
+```
+ES_JAVA_OPTS="-Xms512m -Xmx512m"
+```
+
+**Zusätzlich prüfen:** Alle anderen Werte in .env.example mit Leerzeichen → MÜSSEN gequotet sein. Aktuell ist nur ES_JAVA_OPTS betroffen.
+
+---
+
+### R1-02 — Elasticsearch Compose: Kein riskanter Inline-Default (ADD-002)
+
+**Datei:** `compose/ops/docker-compose.yml` Zeile 158
+
+**Vorher:**
+```yaml
+ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms512m -Xmx512m}
+```
+
+**Nachher:**
+```yaml
+ES_JAVA_OPTS: "${ES_JAVA_OPTS}"
+```
+
+**Begründung:** Default kommt jetzt sauber aus `.env`. Der Inline-Default `${VAR:--Xms512m -Xmx512m}` mit Leerzeichen ist eine Parsing-Falle.
+
+---
+
+### R1-03 — Vaultwarden Healthcheck reparieren (FIX-003)
+
+**Datei:** `compose/ops/docker-compose.yml` Zeile 267-270
+
+**Vorher:**
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "curl -sf http://127.0.0.1:80/alive > /dev/null"]
+  interval: 30s
+  timeout: 5s
+  retries: 5
+```
+
+**Nachher:**
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:80/ | grep -Eq '^(200|301|302|401|403)$'"]
+  interval: 30s
+  timeout: 10s
+  retries: 5
+  start_period: 60s
+```
+
+**Begründung:** `/alive` existiert nicht, `wget` nicht verfügbar. Vaultwarden gibt auf `/` ein 301/302. Wir akzeptieren alle gängigen HTTP-Codes.
+
+---
+
+### R1-04 — Portainer Healthcheck entfernen + Tests anpassen (FIX-004, ADD-003)
+
+**Datei:** `compose/ops/docker-compose.yml` Zeile 288-293
+
+**Vorher:**
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/api/system/status > /dev/null 2>&1"]
+  interval: 30s
+  timeout: 5s
+  retries: 5
+```
+
+**Nachher:**
+```yaml
+healthcheck:
+  test: ["NONE"]
+```
+
+**Datei:** `tests/smoke-test.sh` Zeile 98
+
+**Vorher:**
+```bash
+check "#15 Portainer"        "mcp-portainer"        healthy
+```
+
+**Nachher:**
+```bash
+check "#15 Portainer"        "mcp-portainer"        running
+```
+
+**Datei:** `scripts/mcp-install.sh` Zeile 331
+
+**Vorher:**
+```bash
+local ops_containers=("mcp-zammad-rails" "mcp-elasticsearch" "mcp-bookstack" "mcp-vaultwarden" "mcp-portainer")
+```
+
+**Nachher:**
+```bash
+local ops_containers=("mcp-zammad-rails" "mcp-elasticsearch" "mcp-bookstack" "mcp-vaultwarden")
+```
+
+Plus **nach der Schleife einfügen:**
+```bash
+# Portainer has no /bin/sh — check running instead of healthy
+if docker ps --filter "name=mcp-portainer" --filter "status=running" -q | grep -q .; then
+    log_ok "mcp-portainer is running"
+else
+    gate_fail "phase4" "mcp-portainer not running" "Check logs: docker logs mcp-portainer --tail 100"
+fi
+```
+
+---
+
+### R1-05 — Zabbix-Web: mcp-data-net hinzufügen (FIX-005)
+
+**Datei:** `compose/telemetry/docker-compose.yml` Zeile 47-48
+
+**Vorher:**
+```yaml
+  zabbix-web:
+    ...
+    networks:
+      - mcp-app-net
+```
+
+**Nachher:**
+```yaml
+  zabbix-web:
+    ...
+    networks:
+      - mcp-app-net
+      - mcp-data-net
+```
+
+---
+
+### R1-06 — CrowdSec: Pflicht-Volume + Install-Volume (FIX-006, ADD-001)
+
+**Datei:** `compose/telemetry/docker-compose.yml` — Service `crowdsec`, Volumes ergänzen:
+
+**Vorher:**
+```yaml
+  crowdsec:
+    ...
+    volumes:
+      - ../../config/crowdsec/acquis.yml:/etc/crowdsec/acquis.yaml:ro
+      - /var/log:/var/log:ro
+```
+
+**Nachher:**
+```yaml
+  crowdsec:
+    ...
+    volumes:
+      - ../../config/crowdsec/acquis.yml:/etc/crowdsec/acquis.yaml:ro
+      - /var/log:/var/log:ro
+      - mcp-crowdsec-data:/var/lib/crowdsec/data
+```
+
+**Datei:** `compose/telemetry/docker-compose.yml` — Top-level Volumes ergänzen:
+
+**Nachher (hinzufügen):**
+```yaml
+volumes:
+  mcp-grafana-data:
+    external: true
+  mcp-loki-data:
+    external: true
+  mcp-uptime-kuma-data:
+    external: true
+  mcp-crowdsec-data:
+    external: true
+```
+
+**Datei:** `scripts/mcp-install.sh` — Volume-Liste in Phase 2 (Zeile 228-234):
+
+**In der Liste einfügen:**
+```bash
+# Telemetry Stack
+"mcp-grafana-data" "mcp-loki-data" "mcp-uptime-kuma-data" "mcp-crowdsec-data"
+```
+
+---
+
+### R1-07 — LiteLLM: platform amd64 hinzufügen (FIX-007)
+
+**Datei:** `compose/ai/docker-compose.yml` — Service `litellm`, nach Zeile 46:
+
+**Hinzufügen:**
+```yaml
+  litellm:
+    image: ghcr.io/berriai/litellm:${LITELLM_TAG:-latest}
+    platform: linux/amd64
+    container_name: mcp-litellm
+    ...
+```
+
+---
+
+### R1-08 — Ollama Healthcheck stabilisieren + depends_on entschärfen (FIX-008)
+
+**Datei:** `compose/ai/docker-compose.yml` — Service `ollama`, Healthcheck:
+
+**Vorher:**
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "curl -sf http://127.0.0.1:11434/ > /dev/null"]
+  interval: 30s
+  timeout: 10s
+  retries: 5
+  start_period: 60s
+```
+
+**Nachher:**
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "curl -sf http://127.0.0.1:11434/api/tags >/dev/null"]
+  interval: 30s
+  timeout: 10s
+  retries: 15
+  start_period: 120s
+```
+
+**Service `litellm` depends_on:**
+
+**Vorher:**
+```yaml
+depends_on:
+  ollama:
+    condition: service_healthy
+```
+
+**Nachher:**
+```yaml
+depends_on:
+  ollama:
+    condition: service_started
+```
+
+**Service `langchain` depends_on:**
+
+**Vorher:**
+```yaml
+depends_on:
+  ollama:
+    condition: service_healthy
+  redis-queue:
+    condition: service_healthy
+```
+
+**Nachher:**
+```yaml
+depends_on:
+  ollama:
+    condition: service_started
+  redis-queue:
+    condition: service_healthy
+```
+
+**Service `ai-gateway` depends_on:**
+
+**Vorher:**
+```yaml
+depends_on:
+  ollama:
+    condition: service_healthy
+  redis-queue:
+    condition: service_healthy
+```
+
+**Nachher:**
+```yaml
+depends_on:
+  ollama:
+    condition: service_started
+  redis-queue:
+    condition: service_healthy
+```
+
+**Begründung:** Ollama braucht lange beim ersten Start (Model-Download, GPU-Init). `service_started` verhindert, dass die ganze AI-Kette blockiert. Die Services selbst haben retry-Logik.
+
+---
+
+### R1-09 — Projekt-Name konsistent setzen (FIX-009)
+
+**Datei:** `scripts/mcp-install.sh` — Bei jedem `docker compose` Aufruf:
+
+**Vorher (Beispiel Phase 3, Zeile 282):**
+```bash
+docker compose --env-file .env -f compose/core/docker-compose.yml up -d
+```
+
+**Nachher:**
+```bash
+docker compose -p "${COMPOSE_PROJECT_NAME:-mcp}" --env-file .env -f compose/core/docker-compose.yml up -d
+```
+
+**Betrifft Zeilen:** 282, 308, 352, 379, 389
+
+**Bonus (optional aber empfohlen):** Am Anfang der `main()` Funktion:
+```bash
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-mcp}"
+```
+
+---
+
+### R1-10 — BookStack APP_KEY Auto-Generierung (FIX-002)
+
+**Datei:** `scripts/mcp-install.sh` — In Phase 1 (phase1_preflight), nach dem .env Source-Block (nach Zeile 133):
+
+**Hinzufügen:**
+```bash
+# Auto-generate BookStack APP_KEY if placeholder
+if grep -q "BOOKSTACK_APP_KEY=CHANGE_ME" "${PROJECT_DIR}/.env" 2>/dev/null; then
+    NEW_KEY=$(openssl rand -base64 32)
+    sed -i "s|BOOKSTACK_APP_KEY=CHANGE_ME.*|BOOKSTACK_APP_KEY=base64:${NEW_KEY}|" "${PROJECT_DIR}/.env"
+    log_ok "BookStack APP_KEY auto-generated"
+    # Re-source .env with new key
+    set -a; source "${PROJECT_DIR}/.env"; set +a
+fi
+```
+
+---
+
+### R1-11 — Security-Test: Projekt-Filter dynamisch (ADD-004)
+
+**Datei:** `tests/security-test.sh` — Am Anfang einfügen (nach Zeile 8):
+
+```bash
+# Load env for project name
+if [ -f .env ]; then set -a; source .env; set +a; fi
+PROJECT="${COMPOSE_PROJECT_NAME:-mcp}"
+```
+
+**Zeile 39:**
+```bash
+# Vorher:
+exposed=$(docker ps --filter "label=com.docker.compose.project=mcp" \
+# Nachher:
+exposed=$(docker ps --filter "label=com.docker.compose.project=${PROJECT}" \
+```
+
+**Zeile 75:**
+```bash
+# Vorher:
+for c in $(docker ps --filter "label=com.docker.compose.project=mcp" --format "{{.Names}}"); do
+# Nachher:
+for c in $(docker ps --filter "label=com.docker.compose.project=${PROJECT}" --format "{{.Names}}"); do
+```
+
+---
+
+## 5. Zusammenfassung aller betroffenen Dateien
+
+| Datei | Fixes in Batch R1 |
+|-------|-------------------|
+| `.env.example` | R1-01 |
+| `compose/ops/docker-compose.yml` | R1-02, R1-03, R1-04 |
+| `compose/telemetry/docker-compose.yml` | R1-05, R1-06 |
+| `compose/ai/docker-compose.yml` | R1-07, R1-08 |
+| `scripts/mcp-install.sh` | R1-04, R1-06, R1-09, R1-10 |
+| `tests/smoke-test.sh` | R1-04 |
+| `tests/security-test.sh` | R1-11 |
+
+**Gesamt: 7 Dateien, 11 Repairs**
+
+---
+
+## 6. Was nach R1 als nächstes kommt (Batch R2 — Vorschau)
+
+| Thema | Beschreibung | Priorität |
+|-------|-------------|-----------|
+| Zammad Commands verifizieren | FIX-012: Prüfen ob `zammad-init`, `zammad-railsserver` etc. mit Image 6.4.1 funktionieren | 🟡 Nach Deploy-Test |
+| Keycloak Healthcheck vereinfachen | ADD-005: TCP-Check durch einfacheren curl ersetzen | 🟢 |
+| DIUN Data Volume | ADD-008: Persistentes Volume für DIUN Config | 🟢 |
+| Keycloak Volume Mount | ADD-009: Entweder Volume nutzen oder aus Liste entfernen | 🟢 |
+| Ollama Modell-Name | ADD-010: `mistral:7b` statt langer Quant-Variante als Default | 🟢 |
+| Makefile Projekt-Name | ADD-007: `-p mcp` in Makefile COMPOSE Variablen | 🟢 |
+
+---
+
+## 7. Test-Workflow nach Batch R1
+
+```bash
+# 1. Claude Code: Patch alle R1-Fixes → Push
+git commit -m "repair(R1): env+compose+health+network fixes [11 patches]"
+git push
+
+# 2. Frisch starten (auf dem Server):
+docker compose -p mcp down -v  # Nur wenn Reset gewünscht
+./scripts/mcp-install.sh --clean  # Oder --resume-from phaseN
+
+# 3. Tests laufen lassen:
+make test-smoke     # Alle Container healthy/running?
+make test-security  # Netzwerk-Isolation ok?
+make test-ai        # AI Pipeline Ende-zu-Ende?
+
+# 4. Wenn FAIL → Logs kopieren → an Claude Chat senden → Batch R2
+```
+
+---
+
+*Generiert am 2026-02-18 von Claude Chat (Programmier-Assistent) für Moustafa (Admin)*
