@@ -264,7 +264,7 @@ services:
     volumes:
       - mcp-vaultwarden-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:80/ | grep -Eq '^(200|301|302|401|403)$'"]
+      test: ["CMD", "/healthcheck.sh"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -279,6 +279,7 @@ services:
     image: portainer/portainer-ce:${PORTAINER_TAG:-2.21.5}
     container_name: mcp-portainer
     restart: unless-stopped
+    command: --base-url /portainer
     networks:
       - mcp-app-net
     expose:
