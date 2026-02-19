@@ -420,6 +420,41 @@ phase6_ai() {
 }
 
 # ---------------------------------------------------------------------------
+# Phase 7: Remote Stack (#25-#27)
+# ---------------------------------------------------------------------------
+phase7_remote() {
+    log_info "Phase 7: Remote Stack (3 containers)"
+    echo "----------------------------------------"
+
+    cd "$PROJECT_DIR"
+    docker compose -p "${COMPOSE_PROJECT_NAME:-mcp}" --env-file .env -f compose/remote/docker-compose.yml up -d
+
+    log_info "Waiting for Remote containers..."
+
+    if wait_healthy "mcp-meshcentral" 120; then
+        log_ok "mcp-meshcentral is healthy"
+    else
+        log_warn "mcp-meshcentral not healthy yet (may need more time)"
+    fi
+
+    if wait_healthy "mcp-guacamole" 120; then
+        log_ok "mcp-guacamole is healthy"
+    else
+        log_warn "mcp-guacamole not healthy yet (may need more time)"
+    fi
+
+    # guacd has no healthcheck — check running
+    if docker ps --filter "name=mcp-guacd" --filter "status=running" -q | grep -q .; then
+        log_ok "mcp-guacd is running"
+    else
+        log_warn "mcp-guacd not running"
+    fi
+
+    log_ok "Phase 7: Remote Stack PASSED"
+    echo ""
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 main() {
@@ -431,6 +466,7 @@ main() {
     echo ""
 
     export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-mcp}"
+    export COMPOSE_IGNORE_ORPHANS=1
 
     local start_phase=1
     local only_phase=0
@@ -495,6 +531,10 @@ main() {
 
     if [ "$start_phase" -le 6 ] && { [ "$only_phase" -eq 0 ] || [ "$only_phase" -eq 6 ]; }; then
         phase6_ai
+    fi
+
+    if [ "$start_phase" -le 7 ] && { [ "$only_phase" -eq 0 ] || [ "$only_phase" -eq 7 ]; }; then
+        phase7_remote
     fi
 
     echo ""
