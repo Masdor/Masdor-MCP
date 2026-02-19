@@ -510,8 +510,9 @@ main() {
     fi
 
     # Run phases
-    if [ "$start_phase" -le 1 ]; then phase1_preflight; fi
-    if [ "$only_phase" -gt 0 ] && [ "$only_phase" -ne 1 ] && [ "$start_phase" -le 1 ]; then :; fi
+    if [ "$start_phase" -le 1 ] && { [ "$only_phase" -eq 0 ] || [ "$only_phase" -eq 1 ]; }; then
+        phase1_preflight
+    fi
 
     if [ "$start_phase" -le 2 ] && { [ "$only_phase" -eq 0 ] || [ "$only_phase" -eq 2 ]; }; then
         phase2_environment

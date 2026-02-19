@@ -11,6 +11,7 @@ Endpoints:
 """
 
 import json
+import logging
 import os
 import time
 from datetime import datetime
@@ -20,6 +21,9 @@ import httpx
 import redis
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("mcp-ai-gateway")
 
 app = FastAPI(title="MCP AI Gateway", version="0.1.0")
 
@@ -112,16 +116,16 @@ async def health():
     try:
         r = get_redis()
         redis_ok = r.ping()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Health check: Redis unreachable: {e}")
 
     ollama_ok = False
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(f"{OLLAMA_HOST}/")
             ollama_ok = resp.status_code == 200
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Health check: Ollama unreachable: {e}")
 
     status = "healthy" if (redis_ok and ollama_ok) else "degraded"
     return {

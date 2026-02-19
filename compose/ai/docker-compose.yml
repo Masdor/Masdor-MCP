@@ -92,6 +92,7 @@ services:
       REDIS_QUEUE_HOST: redis-queue
       REDIS_QUEUE_PORT: 6379
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      PRIMARY_MODEL: ${OLLAMA_MODEL:-mistral:7b}
     depends_on:
       ollama:
         condition: service_started

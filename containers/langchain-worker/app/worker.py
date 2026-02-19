@@ -33,6 +33,7 @@ REDIS_QUEUE_HOST = os.getenv("REDIS_QUEUE_HOST", "redis-queue")
 REDIS_QUEUE_PORT = int(os.getenv("REDIS_QUEUE_PORT", "6379"))
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+PRIMARY_MODEL = os.getenv("PRIMARY_MODEL", "mistral:7b")
 PGVECTOR_HOST = os.getenv("PGVECTOR_HOST", "pgvector")
 PGVECTOR_PORT = int(os.getenv("PGVECTOR_PORT", "5432"))
 PGVECTOR_USER = os.getenv("PGVECTOR_USER", "pgvector")
@@ -87,7 +88,7 @@ Antworte NUR mit validem JSON."""
             resp = client.post(
                 f"{OLLAMA_HOST}/api/generate",
                 json={
-                    "model": "mistral:7b",
+                    "model": PRIMARY_MODEL,
                     "prompt": prompt,
                     "stream": False,
                     "options": {"temperature": 0.1, "num_predict": 1024},
@@ -131,7 +132,7 @@ def process_job(r: redis.Redis, job_id: str) -> None:
         return
 
     # Update status
-    r.hset(f"mcp:job:{job_id}", "status", "processing")
+    r.hset(f"mcp:job:{job_id}", mapping={"status": "processing"})
 
     # Run AI analysis
     analysis = analyze_with_ollama(job_data)
@@ -140,7 +141,7 @@ def process_job(r: redis.Redis, job_id: str) -> None:
     r.hset(f"mcp:job:{job_id}", mapping={
         "status": "completed",
         "result": json.dumps(analysis, ensure_ascii=False),
-        "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     })
 
     logger.info(

@@ -32,5 +32,6 @@ datasources:
     jsonData:
       database: mcp_core
       sslmode: disable
+      user: ${GRAFANA_DB_USER}
     secureJsonData:
       password: ${GRAFANA_DB_PASSWORD}
