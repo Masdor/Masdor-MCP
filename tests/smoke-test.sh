@@ -124,6 +124,20 @@ check "#31 AI Gateway"   "mcp-ai-gateway"  healthy
 check "#32 Redis Queue"  "mcp-redis-queue" healthy
 echo ""
 
+echo "=== Dashboard HTTP Checks ==="
+DASHBOARD_PATHS="/auth/ /auto/ /grafana/ /guac/ /monitor/ /notify/ /portainer/ /remote/ /status/ /tickets/ /vault/ /wiki/"
+for path in $DASHBOARD_PATHS; do
+    code=$(curl -sSo /dev/null -w '%{http_code}' --max-time 10 "http://127.0.0.1${path}" 2>/dev/null || echo "000")
+    if [ "$code" = "404" ] || [ "$code" = "502" ] || [ "$code" = "503" ] || [ "$code" = "000" ]; then
+        echo -e "  ${RED}[FAIL]${NC} ${path} — HTTP ${code}"
+        FAIL=$((FAIL + 1))
+    else
+        echo -e "  ${GREEN}[PASS]${NC} ${path} — HTTP ${code}"
+        PASS=$((PASS + 1))
+    fi
+done
+echo ""
+
 echo "============================================"
 echo -e "  PASS: ${GREEN}${PASS}${NC}  |  FAIL: ${RED}${FAIL}${NC}  |  WARN: ${YELLOW}${WARN}${NC}"
 echo "============================================"
