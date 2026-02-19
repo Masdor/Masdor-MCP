@@ -44,3 +44,21 @@ loki.write "default" {
     url = "http://loki:3100/loki/api/v1/push"
   }
 }
+
+// ---------------------------------------------------------------------------
+// Prometheus Scrape: AI Gateway Metriken
+// ---------------------------------------------------------------------------
+prometheus.scrape "ai_gateway" {
+  targets = [{
+    __address__ = "ai-gateway:8000",
+  }]
+  metrics_path = "/metrics"
+  scrape_interval = "30s"
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

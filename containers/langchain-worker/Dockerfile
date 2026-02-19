@@ -1,10 +1,21 @@
-FROM python:3.11-slim
+FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN adduser --system --no-create-home mcp
+
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
 COPY app/ ./app/
+
+USER mcp
 
 CMD ["python", "-m", "app.worker"]

@@ -1,179 +1,230 @@
 """
 MCP v7 — AI Gateway
-Central API for all AI operations in the Managed Control Platform.
+Zentrale API fuer alle AI-Operationen in der Managed Control Platform.
 
 Endpoints:
-    POST /api/v1/analyze   — Receive alert, run AI analysis
-    POST /api/v1/embed     — Create embedding for RAG
-    GET  /api/v1/search    — Search RAG knowledge base
-    GET  /health           — Health check
-    GET  /metrics          — Basic metrics
+    POST /api/v1/analyze          — Alert empfangen, AI-Analyse starten
+    POST /api/v1/embed            — Embedding erstellen und in pgvector speichern
+    GET  /api/v1/search           — RAG-Wissensbasis durchsuchen
+    POST /api/v1/ingest           — Dokument fuer RAG aufnehmen (Chunking + Embedding)
+    GET  /api/v1/jobs             — Alle Jobs auflisten
+    GET  /api/v1/jobs/{job_id}    — Job-Status abfragen
+    GET  /api/v1/models           — Verfuegbare Modelle anzeigen
+    DELETE /api/v1/knowledge/{id} — RAG-Eintrag loeschen
+    GET  /health                  — Health-Check aller Abhaengigkeiten
+    GET  /metrics                 — Prometheus-Metriken
 """
 
 import json
 import logging
-import os
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
 
 import httpx
 import redis
 from fastapi import FastAPI, Header, HTTPException
-from pydantic import BaseModel
+from prometheus_client import Counter, Gauge, Histogram, generate_latest
+from starlette.responses import Response
+
+from app.config import settings
+from app.models.schemas import (
+    AnalyzeRequest,
+    AnalyzeResponse,
+    EmbedRequest,
+    EmbedResponse,
+    HealthResponse,
+    IngestRequest,
+    IngestResponse,
+    JobListResponse,
+    JobStatus,
+    ModelInfo,
+    SearchResponse,
+    SearchResult,
+)
+from app.services.ollama_client import ollama_client
+from app.services.rag_service import rag_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("mcp-ai-gateway")
 
-app = FastAPI(title="MCP AI Gateway", version="0.1.0")
-
 # ---------------------------------------------------------------------------
-# Configuration from environment
+# Prometheus-Metriken
 # ---------------------------------------------------------------------------
-AI_GATEWAY_SECRET = os.getenv("AI_GATEWAY_SECRET", "")
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
-LITELLM_HOST = os.getenv("LITELLM_HOST", "http://litellm:4000")
-REDIS_QUEUE_HOST = os.getenv("REDIS_QUEUE_HOST", "redis-queue")
-REDIS_QUEUE_PORT = int(os.getenv("REDIS_QUEUE_PORT", "6379"))
-ZAMMAD_URL = os.getenv("ZAMMAD_URL", "http://zammad-rails:3000")
-ZAMMAD_TOKEN = os.getenv("ZAMMAD_TOKEN", "")
-NTFY_URL = os.getenv("NTFY_URL", "http://ntfy:80")
-PRIMARY_MODEL = os.getenv("PRIMARY_MODEL", "mistral:7b-instruct-v0.3-q4_K_M")
+REQUESTS_TOTAL = Counter("mcp_requests_total", "Gesamtzahl API-Anfragen", ["endpoint"])
+ANALYSES_COMPLETED = Counter("mcp_analyses_completed_total", "Abgeschlossene Analysen")
+TICKETS_CREATED = Counter("mcp_tickets_created_total", "Erstellte Zammad-Tickets")
+RAG_SEARCHES = Counter("mcp_rag_searches_total", "RAG-Suchvorgaenge")
+EMBEDDINGS_STORED = Counter("mcp_embeddings_stored_total", "Gespeicherte Embeddings")
+ANALYSIS_DURATION = Histogram(
+    "mcp_analysis_duration_seconds", "Analyse-Dauer in Sekunden",
+    buckets=[0.5, 1, 2, 5, 10, 30, 60, 120],
+)
+QUEUE_LENGTH = Gauge("mcp_queue_length", "Aktuelle Queue-Laenge")
 
-# Metrics counters
-_metrics = {
-    "requests_total": 0,
-    "analyses_completed": 0,
-    "analyses_failed": 0,
-    "tickets_created": 0,
-    "start_time": time.time(),
-}
+_start_time = time.time()
 
-# Redis connection (lazy init)
-_redis_client: Optional[redis.Redis] = None
+# Redis-Verbindung (lazy init)
+_redis_client: redis.Redis | None = None
 
 
 def get_redis() -> redis.Redis:
-    """Get or create Redis connection."""
+    """Redis-Verbindung herstellen/wiederverwenden."""
     global _redis_client
     if _redis_client is None:
         _redis_client = redis.Redis(
-            host=REDIS_QUEUE_HOST, port=REDIS_QUEUE_PORT, decode_responses=True
+            host=settings.redis_queue_host,
+            port=settings.redis_queue_port,
+            decode_responses=True,
         )
     return _redis_client
 
 
 # ---------------------------------------------------------------------------
-# Request/Response models
+# App Lifecycle
 # ---------------------------------------------------------------------------
-class AnalyzeRequest(BaseModel):
-    source: str
-    severity: str = "warning"
-    host: str = "unknown"
-    description: str
-    metrics: dict = {}
-    logs: str = ""
-    crowdsec_alerts: str = ""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup: pgvector Pool initialisieren. Shutdown: Verbindungen schliessen."""
+    logger.info("MCP AI Gateway startet...")
+    await rag_service.init_pool()
+    yield
+    logger.info("MCP AI Gateway faehrt herunter...")
+    await ollama_client.close()
+    await rag_service.close()
 
 
-class AnalyzeResponse(BaseModel):
-    status: str
-    job_id: str
-    message: str
-
-
-class EmbedRequest(BaseModel):
-    text: str
-    metadata: dict = {}
-
-
-class SearchRequest(BaseModel):
-    query: str
-    top_k: int = 5
+app = FastAPI(
+    title="MCP AI Gateway",
+    description="Zentrale AI-API fuer MCP v7 IT Operations Center",
+    version="2.0.0",
+    lifespan=lifespan,
+)
 
 
 # ---------------------------------------------------------------------------
-# Auth helper
+# Auth Helper
 # ---------------------------------------------------------------------------
 def verify_token(authorization: Optional[str]) -> None:
-    """Verify Bearer token matches AI_GATEWAY_SECRET."""
-    if not AI_GATEWAY_SECRET:
-        return  # No secret configured — skip auth (dev mode)
+    """Bearer-Token gegen AI_GATEWAY_SECRET pruefen."""
+    if not settings.ai_gateway_secret:
+        return
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+        raise HTTPException(status_code=401, detail="Fehlender oder ungueltiger Authorization-Header")
     token = authorization.removeprefix("Bearer ").strip()
-    if token != AI_GATEWAY_SECRET:
-        raise HTTPException(status_code=403, detail="Invalid token")
+    if token != settings.ai_gateway_secret:
+        raise HTTPException(status_code=403, detail="Ungueltiger Token")
 
 
 # ---------------------------------------------------------------------------
-# Endpoints
+# Health Check
 # ---------------------------------------------------------------------------
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 async def health():
-    """Health check endpoint."""
-    redis_ok = False
+    """Health-Check aller Abhaengigkeiten."""
+    # Redis
+    redis_status = "error"
     try:
         r = get_redis()
-        redis_ok = r.ping()
+        if r.ping():
+            redis_status = "ok"
     except Exception as e:
-        logger.warning(f"Health check: Redis unreachable: {e}")
+        logger.warning("Health: Redis nicht erreichbar: %s", e)
 
-    ollama_ok = False
+    # Ollama
+    ollama_status = "ok" if await ollama_client.health_check() else "error"
+
+    # LiteLLM
+    litellm_status = "error"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{OLLAMA_HOST}/")
-            ollama_ok = resp.status_code == 200
-    except Exception as e:
-        logger.warning(f"Health check: Ollama unreachable: {e}")
+            resp = await client.get(f"{settings.litellm_host}/health/liveliness")
+            litellm_status = "ok" if resp.status_code == 200 else "error"
+    except Exception:
+        pass
 
-    status = "healthy" if (redis_ok and ollama_ok) else "degraded"
-    return {
-        "status": status,
-        "redis": "ok" if redis_ok else "error",
-        "ollama": "ok" if ollama_ok else "error",
-        "uptime_seconds": int(time.time() - _metrics["start_time"]),
-    }
+    # pgvector
+    pgvector_status = "ok" if await rag_service.health_check() else "error"
+
+    # Zammad
+    zammad_status = "error"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{settings.zammad_url}/")
+            zammad_status = "ok" if resp.status_code in (200, 301, 302) else "error"
+    except Exception:
+        pass
+
+    # ntfy
+    ntfy_status = "error"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{settings.ntfy_url}/v1/health")
+            ntfy_status = "ok" if resp.status_code == 200 else "error"
+    except Exception:
+        pass
+
+    statuses = [redis_status, ollama_status, pgvector_status]
+    overall = "healthy" if all(s == "ok" for s in statuses) else "degraded"
+
+    return HealthResponse(
+        status=overall,
+        redis=redis_status,
+        ollama=ollama_status,
+        litellm=litellm_status,
+        pgvector=pgvector_status,
+        zammad=zammad_status,
+        ntfy=ntfy_status,
+        uptime_seconds=int(time.time() - _start_time),
+    )
 
 
+# ---------------------------------------------------------------------------
+# Prometheus Metrics
+# ---------------------------------------------------------------------------
 @app.get("/metrics")
 async def metrics():
-    """Basic metrics endpoint."""
-    return {
-        **_metrics,
-        "uptime_seconds": int(time.time() - _metrics["start_time"]),
-    }
+    """Prometheus-Metriken im OpenMetrics-Format."""
+    try:
+        r = get_redis()
+        queue_len = r.llen("mcp:queue:analyze")
+        QUEUE_LENGTH.set(queue_len)
+    except Exception:
+        pass
+
+    return Response(
+        content=generate_latest(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
+# ---------------------------------------------------------------------------
+# POST /api/v1/analyze — Alert zur Analyse queuen
+# ---------------------------------------------------------------------------
 @app.post("/api/v1/analyze", response_model=AnalyzeResponse)
 async def analyze(
     request: AnalyzeRequest,
     authorization: Optional[str] = Header(None),
 ):
-    """
-    Receive an alert and queue it for AI analysis.
-
-    Flow: Dedup check → Queue job → Worker picks up →
-          RAG search → LLM analysis → Ticket creation → Notification
-    """
+    """Alert empfangen und zur AI-Analyse in die Queue schieben."""
     verify_token(authorization)
-    _metrics["requests_total"] += 1
+    REQUESTS_TOTAL.labels(endpoint="analyze").inc()
 
     r = get_redis()
 
-    # Deduplication: check if same alert was processed in last 15 minutes
+    # Deduplizierung
     dedup_key = f"mcp:dedup:{request.source}:{request.host}:{request.description[:50]}"
     if r.exists(dedup_key):
         return AnalyzeResponse(
             status="deduplicated",
             job_id="",
-            message="Duplicate alert — already processed in the last 15 minutes",
+            message="Duplikat — bereits in den letzten 15 Minuten verarbeitet",
         )
 
-    # Set dedup key with 15-minute TTL
     r.setex(dedup_key, 900, "1")
 
-    # Create job
+    # Job erstellen
     job_id = f"job_{int(time.time())}_{request.source}"
     job_data = {
         "id": job_id,
@@ -188,55 +239,297 @@ async def analyze(
         "crowdsec_alerts": request.crowdsec_alerts,
     }
 
-    # Push to Redis queue
     r.hset(f"mcp:job:{job_id}", mapping=job_data)
     r.lpush("mcp:queue:analyze", job_id)
 
     return AnalyzeResponse(
         status="queued",
         job_id=job_id,
-        message=f"Alert queued for AI analysis (job: {job_id})",
+        message=f"Alert zur AI-Analyse eingereiht (Job: {job_id})",
     )
 
 
-@app.post("/api/v1/embed")
+# ---------------------------------------------------------------------------
+# POST /api/v1/embed — Embedding erstellen und speichern
+# ---------------------------------------------------------------------------
+@app.post("/api/v1/embed", response_model=EmbedResponse)
 async def embed(
     request: EmbedRequest,
     authorization: Optional[str] = Header(None),
 ):
-    """Create an embedding vector for RAG storage."""
+    """Embedding erstellen und in pgvector speichern."""
     verify_token(authorization)
+    REQUESTS_TOTAL.labels(endpoint="embed").inc()
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{OLLAMA_HOST}/api/embeddings",
-                json={"model": "nomic-embed-text", "prompt": request.text},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return {
-                "status": "ok",
-                "embedding": data.get("embedding", []),
-                "dimensions": len(data.get("embedding", [])),
-            }
+        embedding = await ollama_client.embed(request.text)
+        if not embedding:
+            raise HTTPException(status_code=503, detail="Embedding-Service nicht verfuegbar")
+
+        embedding_id = await rag_service.store_embedding(
+            content=request.text,
+            embedding=embedding,
+            source_type=request.source_type,
+            source_id=request.source_id,
+            metadata=request.metadata,
+        )
+
+        stored = embedding_id is not None
+        if stored:
+            EMBEDDINGS_STORED.inc()
+
+        return EmbedResponse(
+            status="ok",
+            embedding_id=embedding_id,
+            dimensions=len(embedding),
+            stored=stored,
+            model_used=settings.embedding_model,
+        )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Embedding failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Embedding fehlgeschlagen: {str(e)}")
 
 
-@app.get("/api/v1/search")
+# ---------------------------------------------------------------------------
+# GET /api/v1/search — RAG-Wissensbasis durchsuchen
+# ---------------------------------------------------------------------------
+@app.get("/api/v1/search", response_model=SearchResponse)
 async def search(
     query: str,
     top_k: int = 5,
     authorization: Optional[str] = Header(None),
 ):
-    """Search the RAG knowledge base using vector similarity."""
+    """RAG-Wissensbasis via Vektor-Aehnlichkeit durchsuchen."""
     verify_token(authorization)
+    REQUESTS_TOTAL.labels(endpoint="search").inc()
+    RAG_SEARCHES.inc()
 
-    # For now, return placeholder — full pgvector search implemented in Phase 9
-    return {
-        "status": "ok",
-        "query": query,
-        "results": [],
-        "message": "RAG search — pgvector integration pending",
-    }
+    try:
+        query_embedding = await ollama_client.embed(query)
+        if not query_embedding:
+            raise HTTPException(status_code=503, detail="Embedding-Service nicht verfuegbar")
+
+        results = await rag_service.search_similar(query_embedding, limit=top_k)
+
+        return SearchResponse(
+            status="ok",
+            query=query,
+            results=[
+                SearchResult(
+                    id=r["id"],
+                    content=r["content"],
+                    similarity=r["similarity"],
+                    source_type=r.get("source_type", ""),
+                    metadata=r.get("metadata", {}),
+                )
+                for r in results
+            ],
+            total=len(results),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Suche fehlgeschlagen: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/ingest — Dokument chunken und einbetten
+# ---------------------------------------------------------------------------
+@app.post("/api/v1/ingest", response_model=IngestResponse)
+async def ingest(
+    request: IngestRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Dokument in Chunks aufteilen, Embeddings erstellen und in pgvector speichern."""
+    verify_token(authorization)
+    REQUESTS_TOTAL.labels(endpoint="ingest").inc()
+
+    chunks = _chunk_text(request.text, request.chunk_size, request.chunk_overlap)
+
+    stored_count = 0
+    for i, chunk in enumerate(chunks):
+        try:
+            embedding = await ollama_client.embed(chunk)
+            if embedding:
+                chunk_metadata = {
+                    **request.metadata,
+                    "chunk_index": i,
+                    "total_chunks": len(chunks),
+                }
+                result = await rag_service.store_embedding(
+                    content=chunk,
+                    embedding=embedding,
+                    source_type=request.source_type,
+                    source_id=f"{request.source_id or 'doc'}_{i}",
+                    metadata=chunk_metadata,
+                )
+                if result:
+                    stored_count += 1
+                    EMBEDDINGS_STORED.inc()
+        except Exception as e:
+            logger.warning("Chunk %d/%d fehlgeschlagen: %s", i + 1, len(chunks), e)
+
+    return IngestResponse(
+        status="ok" if stored_count > 0 else "partial",
+        chunks_created=stored_count,
+        source_type=request.source_type,
+        source_id=request.source_id,
+    )
+
+
+def _chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
+    """Text in ueberlappende Chunks aufteilen."""
+    if len(text) <= chunk_size:
+        return [text]
+
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunk = text[start:end]
+        if chunk.strip():
+            chunks.append(chunk.strip())
+        start += chunk_size - overlap
+    return chunks
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/jobs — Jobs auflisten
+# ---------------------------------------------------------------------------
+@app.get("/api/v1/jobs", response_model=JobListResponse)
+async def list_jobs(
+    offset: int = 0,
+    limit: int = 20,
+    authorization: Optional[str] = Header(None),
+):
+    """Alle Analyse-Jobs auflisten."""
+    verify_token(authorization)
+    REQUESTS_TOTAL.labels(endpoint="jobs").inc()
+
+    r = get_redis()
+    jobs = []
+
+    cursor = 0
+    all_keys = []
+    while True:
+        cursor, keys = r.scan(cursor=cursor, match="mcp:job:*", count=100)
+        all_keys.extend(keys)
+        if cursor == 0:
+            break
+
+    all_keys.sort(reverse=True)
+    total = len(all_keys)
+    page_keys = all_keys[offset:offset + limit]
+
+    for key in page_keys:
+        try:
+            data = r.hgetall(key)
+            if data:
+                result = None
+                if data.get("result"):
+                    try:
+                        result = json.loads(data["result"])
+                    except json.JSONDecodeError:
+                        pass
+
+                jobs.append(JobStatus(
+                    id=data.get("id", key.split(":")[-1]),
+                    status=data.get("status", "unknown"),
+                    source=data.get("source", ""),
+                    severity=data.get("severity", ""),
+                    host=data.get("host", ""),
+                    description=data.get("description", "")[:200],
+                    created_at=data.get("created_at", ""),
+                    completed_at=data.get("completed_at", ""),
+                    result=result,
+                    model_used=data.get("model_used", ""),
+                    processing_time_ms=int(data.get("processing_time_ms", 0)),
+                    ticket_id=data.get("ticket_id", ""),
+                ))
+        except Exception as e:
+            logger.warning("Job-Daten fuer %s fehlerhaft: %s", key, e)
+
+    return JobListResponse(jobs=jobs, total=total, offset=offset, limit=limit)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/jobs/{job_id} — Job-Status abfragen
+# ---------------------------------------------------------------------------
+@app.get("/api/v1/jobs/{job_id}", response_model=JobStatus)
+async def get_job(
+    job_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Status und Ergebnis eines bestimmten Jobs abfragen."""
+    verify_token(authorization)
+    REQUESTS_TOTAL.labels(endpoint="job_detail").inc()
+
+    r = get_redis()
+    data = r.hgetall(f"mcp:job:{job_id}")
+
+    if not data:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} nicht gefunden")
+
+    result = None
+    if data.get("result"):
+        try:
+            result = json.loads(data["result"])
+        except json.JSONDecodeError:
+            pass
+
+    return JobStatus(
+        id=data.get("id", job_id),
+        status=data.get("status", "unknown"),
+        source=data.get("source", ""),
+        severity=data.get("severity", ""),
+        host=data.get("host", ""),
+        description=data.get("description", ""),
+        created_at=data.get("created_at", ""),
+        completed_at=data.get("completed_at", ""),
+        result=result,
+        model_used=data.get("model_used", ""),
+        processing_time_ms=int(data.get("processing_time_ms", 0)),
+        ticket_id=data.get("ticket_id", ""),
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/models — Verfuegbare Modelle anzeigen
+# ---------------------------------------------------------------------------
+@app.get("/api/v1/models", response_model=list[ModelInfo])
+async def list_models(
+    authorization: Optional[str] = Header(None),
+):
+    """Verfuegbare LLM-Modelle auflisten (via Ollama)."""
+    verify_token(authorization)
+    REQUESTS_TOTAL.labels(endpoint="models").inc()
+
+    models = await ollama_client.list_models()
+    return [
+        ModelInfo(
+            name=m.get("name", "unknown"),
+            size=str(m.get("size", "")),
+            modified_at=m.get("modified_at"),
+        )
+        for m in models
+    ]
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/v1/knowledge/{id} — RAG-Eintrag loeschen
+# ---------------------------------------------------------------------------
+@app.delete("/api/v1/knowledge/{embedding_id}")
+async def delete_knowledge(
+    embedding_id: int,
+    authorization: Optional[str] = Header(None),
+):
+    """RAG-Eintrag aus der Wissensbasis loeschen."""
+    verify_token(authorization)
+    REQUESTS_TOTAL.labels(endpoint="knowledge_delete").inc()
+
+    success = await rag_service.delete_embedding(embedding_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Eintrag {embedding_id} nicht gefunden")
+
+    return {"status": "ok", "deleted_id": embedding_id}

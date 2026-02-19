@@ -82,6 +82,7 @@ services:
     networks:
       - mcp-ai-net
       - mcp-data-net
+      - mcp-app-net
     environment:
       PGVECTOR_HOST: pgvector
       PGVECTOR_PORT: 5432
@@ -89,10 +90,17 @@ services:
       PGVECTOR_PASSWORD: ${PGVECTOR_PASSWORD}
       PGVECTOR_DB: ${PGVECTOR_DB}
       OLLAMA_HOST: http://ollama:11434
+      LITELLM_HOST: http://litellm:4000
       REDIS_QUEUE_HOST: redis-queue
       REDIS_QUEUE_PORT: 6379
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       PRIMARY_MODEL: ${OLLAMA_MODEL:-mistral:7b}
+      ZAMMAD_URL: http://zammad-rails:3000
+      ZAMMAD_TOKEN: ${ZAMMAD_AI_TOKEN}
+      NTFY_URL: http://ntfy:80
+    volumes:
+      - ../../config/ai/prompts:/app/config/prompts:ro
+      - ../../config/ai/rag-config.yml:/app/config/rag-config.yml:ro
     depends_on:
       ollama:
         condition: service_started
@@ -116,6 +124,7 @@ services:
     networks:
       - mcp-ai-net
       - mcp-app-net
+      - mcp-data-net
     expose:
       - "8000"
     environment:
