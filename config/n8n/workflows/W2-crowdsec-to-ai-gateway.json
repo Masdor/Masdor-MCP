@@ -1,0 +1,92 @@
+{
+  "name": "W2 — CrowdSec Alert → AI Gateway",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "crowdsec-alert",
+        "responseMode": "responseNode"
+      },
+      "id": "webhook-trigger",
+      "name": "CrowdSec Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// CrowdSec Alert in AI Gateway AnalyzeRequest transformieren\nconst body = $input.first().json.body || $input.first().json;\nconst alerts = Array.isArray(body) ? body : [body];\n\nconst results = alerts.map(alert => {\n  const decisions = (alert.decisions || []).map(d => \n    `${d.type}: ${d.value} (${d.scope}, ${d.duration})`\n  ).join('; ');\n\n  const sources = (alert.source || {});\n  \n  return {\n    json: {\n      source: 'crowdsec',\n      severity: mapCrowdSecSeverity(alert.scenario || ''),\n      host: sources.ip || sources.value || 'unknown',\n      description: `IDS Alert: ${alert.scenario || 'unknown'} - ${alert.message || ''}`,\n      metrics: {\n        scenario: alert.scenario || '',\n        events_count: alert.events_count || 0,\n        start_at: alert.start_at || '',\n        stop_at: alert.stop_at || '',\n        source_ip: sources.ip || '',\n        source_scope: sources.scope || '',\n        source_as_number: sources.as_number || '',\n        source_cn: sources.cn || ''\n      },\n      logs: '',\n      crowdsec_alerts: `Szenario: ${alert.scenario}\\nEntscheidungen: ${decisions}\\nQuelle: ${sources.ip} (${sources.cn || 'unbekannt'})\\nEvents: ${alert.events_count}`\n    }\n  };\n});\n\nreturn results;\n\nfunction mapCrowdSecSeverity(scenario) {\n  if (scenario.includes('bruteforce') || scenario.includes('exploit')) return 'critical';\n  if (scenario.includes('scan') || scenario.includes('crawl')) return 'high';\n  if (scenario.includes('bad-user-agent')) return 'warning';\n  return 'high';\n}"
+      },
+      "id": "transform-crowdsec",
+      "name": "Transform CrowdSec → AI Format",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://ai-gateway:8000/api/v1/analyze",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.AI_GATEWAY_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "post-to-gateway",
+      "name": "POST AI Gateway",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'accepted', job_id: $json.job_id || '' }) }}"
+      },
+      "id": "respond-webhook",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [910, 300]
+    }
+  ],
+  "connections": {
+    "CrowdSec Webhook": {
+      "main": [
+        [{"node": "Transform CrowdSec → AI Format", "type": "main", "index": 0}]
+      ]
+    },
+    "Transform CrowdSec → AI Format": {
+      "main": [
+        [{"node": "POST AI Gateway", "type": "main", "index": 0}]
+      ]
+    },
+    "POST AI Gateway": {
+      "main": [
+        [{"node": "Respond OK", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {"name": "crowdsec"},
+    {"name": "security"},
+    {"name": "ai-gateway"}
+  ]
+}

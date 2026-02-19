@@ -1,0 +1,100 @@
+{
+  "name": "W3 — BookStack → RAG Ingestion",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bookstack-update",
+        "responseMode": "lastNode"
+      },
+      "id": "webhook-trigger",
+      "name": "BookStack Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// BookStack Webhook-Daten fuer RAG-Ingestion vorbereiten\nconst body = $input.first().json.body || $input.first().json;\n\n// BookStack sendet: related_item (page/chapter/book)\nconst item = body.related_item || body;\nconst text = item.html || item.text || item.markdown || item.description || '';\nconst name = item.name || item.title || 'Unbenannt';\nconst itemId = item.id || '';\nconst itemSlug = item.slug || '';\n\n// HTML-Tags entfernen fuer sauberes Embedding\nconst cleanText = text.replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim();\n\nif (!cleanText || cleanText.length < 50) {\n  // Zu kurz fuer RAG-Aufnahme\n  return [{ json: { skip: true, reason: 'Text zu kurz' } }];\n}\n\nreturn [{\n  json: {\n    text: `${name}\\n\\n${cleanText}`,\n    source_type: 'wiki',\n    source_id: `bookstack_${itemId}`,\n    metadata: {\n      title: name,\n      bookstack_id: itemId,\n      slug: itemSlug,\n      event: body.event || 'page_update',\n      updated_at: body.triggered_at || new Date().toISOString()\n    },\n    chunk_size: 512,\n    chunk_overlap: 50\n  }\n}];"
+      },
+      "id": "transform-bookstack",
+      "name": "Extract & Clean Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.skip }}",
+              "operation": "notEqual",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-skip",
+      "name": "Text lang genug?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://ai-gateway:8000/api/v1/ingest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.AI_GATEWAY_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "post-ingest",
+      "name": "POST Ingest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [910, 250]
+    }
+  ],
+  "connections": {
+    "BookStack Webhook": {
+      "main": [
+        [{"node": "Extract & Clean Text", "type": "main", "index": 0}]
+      ]
+    },
+    "Extract & Clean Text": {
+      "main": [
+        [{"node": "Text lang genug?", "type": "main", "index": 0}]
+      ]
+    },
+    "Text lang genug?": {
+      "main": [
+        [{"node": "POST Ingest", "type": "main", "index": 0}],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {"name": "bookstack"},
+    {"name": "rag"},
+    {"name": "knowledge-base"}
+  ]
+}

@@ -1,0 +1,131 @@
+{
+  "name": "W1 — Zabbix Alert → AI Gateway",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "zabbix-alert",
+        "responseMode": "responseNode"
+      },
+      "id": "webhook-trigger",
+      "name": "Zabbix Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Zabbix Alert-Format in AI Gateway AnalyzeRequest transformieren\nconst body = $input.first().json.body || $input.first().json;\n\nreturn [{\n  json: {\n    source: 'zabbix',\n    severity: mapSeverity(body.severity || body.nseverity || '3'),\n    host: body.host || body.hostname || 'unknown',\n    description: body.subject || body.message || body.alert_message || 'Zabbix Alert',\n    metrics: {\n      trigger_id: body.trigger_id || '',\n      event_id: body.event_id || '',\n      trigger_name: body.trigger_name || '',\n      trigger_status: body.trigger_status || '',\n      item_value: body.item_value || ''\n    },\n    logs: body.event_tags || '',\n    crowdsec_alerts: ''\n  }\n}];\n\nfunction mapSeverity(s) {\n  const map = {'0': 'info', '1': 'info', '2': 'warning', '3': 'warning', '4': 'high', '5': 'critical'};\n  return map[String(s)] || 'warning';\n}"
+      },
+      "id": "transform-zabbix",
+      "name": "Transform Zabbix → AI Format",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://ai-gateway:8000/api/v1/analyze",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.AI_GATEWAY_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxRetries": 3,
+            "retryInterval": 5000
+          }
+        }
+      },
+      "id": "post-to-gateway",
+      "name": "POST AI Gateway",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'accepted', job_id: $json.job_id || '' }) }}"
+      },
+      "id": "respond-webhook",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://ntfy:80/mcp-alerts",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Title",
+              "value": "Zabbix-AI Workflow Fehler"
+            },
+            {
+              "name": "Priority",
+              "value": "4"
+            },
+            {
+              "name": "Tags",
+              "value": "warning,zabbix,n8n"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "raw",
+        "rawContentType": "text/plain",
+        "body": "Zabbix → AI Gateway Workflow fehlgeschlagen. Bitte manuell pruefen."
+      },
+      "id": "error-ntfy",
+      "name": "ntfy Error Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [690, 500]
+    }
+  ],
+  "connections": {
+    "Zabbix Webhook": {
+      "main": [
+        [{"node": "Transform Zabbix → AI Format", "type": "main", "index": 0}]
+      ]
+    },
+    "Transform Zabbix → AI Format": {
+      "main": [
+        [{"node": "POST AI Gateway", "type": "main", "index": 0}]
+      ]
+    },
+    "POST AI Gateway": {
+      "main": [
+        [{"node": "Respond OK", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {"name": "zabbix"},
+    {"name": "ai-gateway"},
+    {"name": "automation"}
+  ]
+}

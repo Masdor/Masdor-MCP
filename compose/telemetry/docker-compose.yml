@@ -100,6 +100,8 @@ services:
     volumes:
       - mcp-grafana-data:/var/lib/grafana
       - ../../config/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ../../config/grafana/dashboard-provider.yml:/etc/grafana/provisioning/dashboards/provider.yml:ro
+      - ../../config/grafana/dashboards:/etc/grafana/provisioning/dashboards/json:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3000/api/health > /dev/null"]
       interval: 30s

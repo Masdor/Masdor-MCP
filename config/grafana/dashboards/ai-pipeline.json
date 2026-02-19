@@ -1,0 +1,286 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "AI Pipeline — Uebersicht",
+      "type": "row",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "collapsed": false
+    },
+    {
+      "title": "Queue-Laenge",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "{container=\"mcp-ai-gateway\"} |= \"queue_length\" | json | line_format \"{{.mcp_queue_length}}\"",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 5},
+              {"color": "red", "value": 20}
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "colorMode": "background",
+        "graphMode": "area"
+      }
+    },
+    {
+      "title": "Anfragen Gesamt",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1},
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "count_over_time({container=\"mcp-ai-gateway\"} |= \"analyze\" [24h])",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "blue", "value": null}
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["sum"]},
+        "colorMode": "background"
+      }
+    },
+    {
+      "title": "Tickets Erstellt (24h)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "count_over_time({container=\"mcp-langchain\"} |= \"Zammad-Ticket\" |= \"erstellt\" [24h])",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "purple", "value": null}
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["sum"]},
+        "colorMode": "background"
+      }
+    },
+    {
+      "title": "RAG-Suchen (24h)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "count_over_time({container=\"mcp-langchain\"} |= \"RAG\" |= \"aehnliche Incidents\" [24h])",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "orange", "value": null}
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["sum"]},
+        "colorMode": "background"
+      }
+    },
+    {
+      "title": "LLM-Route (LiteLLM vs Ollama)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "count_over_time({container=\"mcp-langchain\"} |= \"via litellm\" [24h])",
+          "legendFormat": "LiteLLM",
+          "refId": "A"
+        },
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "count_over_time({container=\"mcp-langchain\"} |= \"via ollama\" [24h])",
+          "legendFormat": "Ollama",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "title": "Worker Uptime",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "count_over_time({container=\"mcp-langchain\"} |= \"Worker bereit\" [7d])",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "AI-Analyse Jobs (Timeline)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "count_over_time({container=\"mcp-langchain\"} |= \"abgeschlossen\" [1h])",
+          "legendFormat": "Abgeschlossen",
+          "refId": "A"
+        },
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "count_over_time({container=\"mcp-langchain\"} |= \"fehlgeschlagen\" [1h])",
+          "legendFormat": "Fehlgeschlagen",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 50,
+            "stacking": {"mode": "normal"}
+          }
+        }
+      }
+    },
+    {
+      "title": "Konfidenz-Verteilung",
+      "type": "piechart",
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 5},
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "count_over_time({container=\"mcp-langchain\"} |= \"Confidence: High\" [24h])",
+          "legendFormat": "High",
+          "refId": "A"
+        },
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "count_over_time({container=\"mcp-langchain\"} |= \"Confidence: Medium\" [24h])",
+          "legendFormat": "Medium",
+          "refId": "B"
+        },
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "count_over_time({container=\"mcp-langchain\"} |= \"Confidence: Low\" [24h])",
+          "legendFormat": "Low",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "title": "Impact-Verteilung",
+      "type": "piechart",
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 5},
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "count_over_time({container=\"mcp-langchain\"} |= \"Impact: Kritisch\" [24h])",
+          "legendFormat": "Kritisch",
+          "refId": "A"
+        },
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "count_over_time({container=\"mcp-langchain\"} |= \"Impact: Hoch\" [24h])",
+          "legendFormat": "Hoch",
+          "refId": "B"
+        },
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "count_over_time({container=\"mcp-langchain\"} |= \"Impact: Mittel\" [24h])",
+          "legendFormat": "Mittel",
+          "refId": "C"
+        },
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "count_over_time({container=\"mcp-langchain\"} |= \"Impact: Gering\" [24h])",
+          "legendFormat": "Gering",
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "title": "AI Pipeline Logs",
+      "type": "logs",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 13},
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki"},
+          "expr": "{container=~\"mcp-langchain|mcp-ai-gateway\"}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["mcp", "ai", "pipeline"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "title": "MCP AI Pipeline",
+  "uid": "mcp-ai-pipeline",
+  "version": 1
+}

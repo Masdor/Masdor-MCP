@@ -1,26 +1,31 @@
 """
 MCP v7 — LangChain Worker
-Processes AI analysis jobs from the Redis queue.
+Verarbeitet AI-Analyse-Jobs aus der Redis-Queue.
 
-Flow:
-    1. Pop job from mcp:queue:analyze
-    2. Fetch context (metrics, logs)
-    3. RAG search in pgvector for similar incidents
-    4. Send to Ollama for LLM analysis
-    5. Create ticket in Zammad via AI Gateway
-    6. Send notification via ntfy
-    7. Store result back in Redis
+Vollstaendige Pipeline:
+    1. Job aus mcp:queue:analyze poppen
+    2. RAG-Suche in pgvector fuer aehnliche Incidents
+    3. Professionellen Prompt laden und befuellen
+    4. LLM-Analyse via LiteLLM (Fallback: Ollama)
+    5. Zammad-Ticket erstellen (bei hoher Severity + Confidence)
+    6. ntfy-Benachrichtigung senden
+    7. Ergebnis in Redis speichern + Embedding fuer zukuenftige RAG
 """
 
 import json
 import logging
-import os
 import signal
 import sys
 import time
 
-import httpx
 import redis
+
+from app.config import settings
+from app.prompts import build_prompt
+from app.services.llm_client import llm_client
+from app.services.ntfy_client import ntfy_client
+from app.services.pgvector_service import pgvector_service
+from app.services.zammad_client import zammad_client
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,25 +33,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mcp-langchain-worker")
 
-# Configuration
-REDIS_QUEUE_HOST = os.getenv("REDIS_QUEUE_HOST", "redis-queue")
-REDIS_QUEUE_PORT = int(os.getenv("REDIS_QUEUE_PORT", "6379"))
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
-PRIMARY_MODEL = os.getenv("PRIMARY_MODEL", "mistral:7b")
-PGVECTOR_HOST = os.getenv("PGVECTOR_HOST", "pgvector")
-PGVECTOR_PORT = int(os.getenv("PGVECTOR_PORT", "5432"))
-PGVECTOR_USER = os.getenv("PGVECTOR_USER", "pgvector")
-PGVECTOR_PASSWORD = os.getenv("PGVECTOR_PASSWORD", "")
-PGVECTOR_DB = os.getenv("PGVECTOR_DB", "mcp_vectors")
-
-# Graceful shutdown
+# Graceful Shutdown
 _running = True
 
 
 def signal_handler(_sig, _frame):
     global _running
-    logger.info("Shutdown signal received — finishing current job...")
+    logger.info("Shutdown-Signal empfangen — beende aktuellen Job...")
     _running = False
 
 
@@ -55,141 +48,279 @@ signal.signal(signal.SIGINT, signal_handler)
 
 
 def get_redis() -> redis.Redis:
-    """Create Redis connection."""
+    """Redis-Verbindung erstellen."""
     return redis.Redis(
-        host=REDIS_QUEUE_HOST,
-        port=REDIS_QUEUE_PORT,
+        host=settings.redis_queue_host,
+        port=settings.redis_queue_port,
         decode_responses=True,
     )
 
 
-def analyze_with_ollama(job_data: dict) -> dict:
-    """Send alert to Ollama for analysis."""
-    prompt = f"""Du bist ein IT-Operations-Analyst. Analysiere den folgenden Alert.
+def parse_llm_response(response_text: str) -> dict:
+    """JSON aus LLM-Antwort extrahieren (mit Fallback)."""
+    text = response_text.strip()
 
-Alert-Typ: {job_data.get('source', 'unknown')}
-Host: {job_data.get('host', 'unknown')}
-Schweregrad: {job_data.get('severity', 'warning')}
-Beschreibung: {job_data.get('description', '')}
-Metriken: {job_data.get('metrics', '{}')}
-Logs: {job_data.get('logs', 'keine')}
-
-Erstelle einen JSON-Bericht mit:
-- root_cause: Ursachenanalyse (1-2 Saetze)
-- impact: Gering|Mittel|Hoch|Kritisch
-- immediate_action: Sofortmassnahme
-- confidence: High|Medium|Low
-- ticket_title: Kurzer Titel fuer das Ticket
-
-Antworte NUR mit validem JSON."""
+    # JSON aus Markdown-Codeblock extrahieren
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
 
     try:
-        with httpx.Client(timeout=120.0) as client:
-            resp = client.post(
-                f"{OLLAMA_HOST}/api/generate",
-                json={
-                    "model": PRIMARY_MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 1024},
-                },
-            )
-            resp.raise_for_status()
-            result = resp.json()
-            response_text = result.get("response", "")
-
-            # Try to parse JSON from response
-            try:
-                analysis = json.loads(response_text)
-                return analysis
-            except json.JSONDecodeError:
-                return {
-                    "root_cause": response_text[:200],
-                    "impact": "Mittel",
-                    "immediate_action": "Manuelle Analyse erforderlich",
-                    "confidence": "Low",
-                    "ticket_title": f"[AI] {job_data.get('description', 'Alert')[:60]}",
-                }
-    except Exception as e:
-        logger.error(f"Ollama analysis failed: {e}")
+        return json.loads(text)
+    except json.JSONDecodeError:
         return {
-            "root_cause": f"AI-Analyse fehlgeschlagen: {str(e)}",
+            "root_cause": response_text[:300],
             "impact": "Mittel",
+            "affected_services": [],
             "immediate_action": "Manuelle Analyse erforderlich",
+            "long_term_solution": "",
             "confidence": "Low",
-            "ticket_title": f"[MANUAL] {job_data.get('description', 'Alert')[:60]}",
+            "confidence_reason": "JSON-Parsing fehlgeschlagen",
+            "ticket_title": "[AI] Manuelle Analyse erforderlich",
+            "ticket_priority": "2_normal",
         }
 
 
-def process_job(r: redis.Redis, job_id: str) -> None:
-    """Process a single analysis job."""
-    logger.info(f"Processing job: {job_id}")
+def map_priority(priority_str: str) -> int:
+    """Ticket-Priority-String auf Zammad priority_id mappen."""
+    mapping = {
+        "4_urgent": 1,
+        "3_high": 2,
+        "2_normal": 3,
+        "1_low": 4,
+    }
+    return mapping.get(priority_str, 3)
 
-    # Get job data
+
+def should_create_ticket(analysis: dict, severity: str) -> bool:
+    """Entscheiden ob ein Ticket erstellt werden soll."""
+    confidence = analysis.get("confidence", "Low")
+    impact = analysis.get("impact", "Gering")
+
+    high_confidence = confidence in ("High", "Medium")
+    high_severity = severity in ("critical", "high") or impact in ("Hoch", "Kritisch")
+
+    return high_confidence and high_severity
+
+
+def process_job(r: redis.Redis, job_id: str) -> None:
+    """Einen Analyse-Job vollstaendig verarbeiten."""
+    start_time = time.monotonic()
+    logger.info("Verarbeite Job: %s", job_id)
+
+    # 1. Job-Daten aus Redis holen
     job_data = r.hgetall(f"mcp:job:{job_id}")
     if not job_data:
-        logger.warning(f"Job {job_id} not found — skipping")
+        logger.warning("Job %s nicht gefunden — ueberspringe", job_id)
         return
 
-    # Update status
+    # Status aktualisieren
     r.hset(f"mcp:job:{job_id}", mapping={"status": "processing"})
 
-    # Run AI analysis
-    analysis = analyze_with_ollama(job_data)
+    # 2. RAG-Suche: aehnliche Incidents finden
+    rag_results = []
+    try:
+        description = job_data.get("description", "")
+        if description and pgvector_service.health_check():
+            query_embedding = llm_client.embed(description)
+            if query_embedding:
+                rag_results = pgvector_service.search_similar(
+                    query_embedding, limit=settings.rag_top_k
+                )
+                if rag_results:
+                    logger.info(
+                        "RAG: %d aehnliche Incidents gefunden (beste Aehnlichkeit: %.2f)",
+                        len(rag_results),
+                        rag_results[0]["similarity"],
+                    )
+    except Exception as e:
+        logger.warning("RAG-Suche fehlgeschlagen, fahre ohne Kontext fort: %s", e)
 
-    # Store result
-    r.hset(f"mcp:job:{job_id}", mapping={
+    # 3. Professionellen Prompt laden und befuellen
+    prompt = build_prompt(job_data, rag_results)
+
+    # 4. LLM-Analyse (LiteLLM-First, Ollama-Fallback)
+    try:
+        llm_result = llm_client.generate(prompt)
+        response_text = llm_result.get("response", "")
+        model_used = llm_result.get("model", settings.primary_model)
+        via = llm_result.get("via", "unknown")
+        logger.info("LLM-Antwort erhalten via %s (%s)", via, model_used)
+    except Exception as e:
+        logger.error("LLM-Analyse fehlgeschlagen: %s", e)
+        r.hset(f"mcp:job:{job_id}", mapping={
+            "status": "failed",
+            "error": str(e),
+            "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        })
+        return
+
+    # 5. JSON aus Antwort parsen
+    analysis = parse_llm_response(response_text)
+
+    elapsed_ms = int((time.monotonic() - start_time) * 1000)
+
+    # 6. Zammad-Ticket erstellen (bei hoher Severity + Confidence)
+    ticket_id = None
+    severity = job_data.get("severity", "warning")
+    if should_create_ticket(analysis, severity):
+        ticket_title = analysis.get("ticket_title", f"[AI] {job_data.get('description', 'Alert')[:60]}")
+        ticket_body = (
+            f"<h2>{ticket_title}</h2>"
+            f"<p><strong>Root Cause:</strong> {analysis.get('root_cause', 'N/A')}</p>"
+            f"<p><strong>Impact:</strong> {analysis.get('impact', 'N/A')}</p>"
+            f"<p><strong>Betroffene Services:</strong> {', '.join(analysis.get('affected_services', []))}</p>"
+            f"<h3>Sofortmassnahme</h3><p>{analysis.get('immediate_action', 'N/A')}</p>"
+            f"<h3>Langfristige Loesung</h3><p>{analysis.get('long_term_solution', 'N/A')}</p>"
+            f"<hr><p><em>AI Confidence: {analysis.get('confidence', 'N/A')} — "
+            f"Job: {job_id} — Modell: {model_used}</em></p>"
+        )
+        priority_id = map_priority(analysis.get("ticket_priority", "2_normal"))
+        ticket = zammad_client.create_ticket(
+            title=ticket_title,
+            body=ticket_body,
+            priority_id=priority_id,
+            tags=f"ai-generated,{job_data.get('source', 'unknown')}",
+        )
+        if ticket:
+            ticket_id = str(ticket.get("id"))
+
+    # 7. ntfy-Benachrichtigung senden
+    impact = analysis.get("impact", "Mittel")
+    ntfy_title = analysis.get("ticket_title", f"MCP Alert: {job_data.get('host', 'unknown')}")
+    ntfy_message = (
+        f"Host: {job_data.get('host', 'unknown')}\n"
+        f"Impact: {impact}\n"
+        f"Ursache: {analysis.get('root_cause', 'N/A')}\n"
+        f"Massnahme: {analysis.get('immediate_action', 'N/A')}"
+    )
+    if ticket_id:
+        ntfy_message += f"\nTicket: #{ticket_id}"
+
+    ntfy_client.send_notification(
+        title=ntfy_title,
+        message=ntfy_message,
+        severity=impact,
+        tags=["warning", job_data.get("source", "mcp")],
+    )
+
+    # 8. Ergebnis in Redis speichern
+    result_data = {
         "status": "completed",
         "result": json.dumps(analysis, ensure_ascii=False),
+        "model_used": model_used,
+        "processing_time_ms": str(elapsed_ms),
+        "rag_context_used": str(len(rag_results) > 0),
+        "ticket_id": ticket_id or "",
         "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    })
+    }
+    r.hset(f"mcp:job:{job_id}", mapping=result_data)
+
+    # 9. Analyse-Ergebnis in pgvector speichern (fuer zukuenftige RAG-Suche)
+    try:
+        if pgvector_service.health_check():
+            # Analyse als Text zusammenfassen fuer Embedding
+            summary = (
+                f"Alert von {job_data.get('source', 'unknown')} auf {job_data.get('host', 'unknown')}: "
+                f"{job_data.get('description', '')} — "
+                f"Ursache: {analysis.get('root_cause', 'N/A')} — "
+                f"Massnahme: {analysis.get('immediate_action', 'N/A')}"
+            )
+            embedding = llm_client.embed(summary)
+            if embedding:
+                pgvector_service.store_embedding(
+                    content=summary,
+                    embedding=embedding,
+                    source_type="analysis",
+                    source_id=job_id,
+                    metadata={
+                        "source": job_data.get("source"),
+                        "host": job_data.get("host"),
+                        "severity": severity,
+                        "impact": impact,
+                        "confidence": analysis.get("confidence"),
+                        "ticket_id": ticket_id,
+                    },
+                )
+
+            # Analyse im Audit-Log speichern
+            confidence_score = {"High": 0.9, "Medium": 0.6, "Low": 0.3}.get(
+                analysis.get("confidence", "Low"), 0.3
+            )
+            pgvector_service.log_analysis(
+                event_source=job_data.get("source", "unknown"),
+                event_data=job_data,
+                analysis_result=analysis,
+                confidence_score=confidence_score,
+                ticket_id=ticket_id,
+                model_used=model_used,
+                processing_time_ms=elapsed_ms,
+            )
+    except Exception as e:
+        logger.warning("pgvector-Speicherung fehlgeschlagen (nicht kritisch): %s", e)
 
     logger.info(
-        f"Job {job_id} completed — confidence: {analysis.get('confidence', '?')}, "
-        f"impact: {analysis.get('impact', '?')}"
+        "Job %s abgeschlossen — Confidence: %s, Impact: %s, Ticket: %s, Dauer: %dms",
+        job_id,
+        analysis.get("confidence", "?"),
+        analysis.get("impact", "?"),
+        ticket_id or "keins",
+        elapsed_ms,
     )
 
 
 def main():
-    """Main worker loop — poll Redis queue for jobs."""
-    logger.info("MCP LangChain Worker starting...")
-    logger.info(f"Redis: {REDIS_QUEUE_HOST}:{REDIS_QUEUE_PORT}")
-    logger.info(f"Ollama: {OLLAMA_HOST}")
+    """Hauptschleife — wartet auf Jobs in der Redis-Queue."""
+    logger.info("MCP LangChain Worker startet...")
+    logger.info("Redis: %s:%s", settings.redis_queue_host, settings.redis_queue_port)
+    logger.info("LiteLLM: %s (Fallback: %s)", settings.litellm_host, settings.ollama_host)
+    logger.info("pgvector: %s:%s", settings.pgvector_host, settings.pgvector_port)
 
-    # Wait for Redis
+    # Redis-Verbindung herstellen
     r = None
     for attempt in range(30):
         try:
             r = get_redis()
             r.ping()
-            logger.info("Connected to Redis queue")
+            logger.info("Redis-Queue verbunden")
             break
         except Exception:
-            logger.info(f"Waiting for Redis... (attempt {attempt + 1}/30)")
+            logger.info("Warte auf Redis... (Versuch %d/30)", attempt + 1)
             time.sleep(2)
 
     if r is None:
-        logger.error("Could not connect to Redis — exiting")
+        logger.error("Redis nicht erreichbar — beende")
         sys.exit(1)
 
-    # Main processing loop
-    logger.info("Worker ready — waiting for jobs...")
+    # pgvector-Verbindung herstellen (nicht-kritisch)
+    try:
+        pgvector_service.connect()
+    except Exception as e:
+        logger.warning("pgvector nicht erreichbar (Worker laeuft ohne RAG): %s", e)
+
+    # Hauptverarbeitungsschleife
+    logger.info("Worker bereit — warte auf Jobs...")
     while _running:
         try:
-            # Block for 5 seconds waiting for a job
             result = r.brpop("mcp:queue:analyze", timeout=5)
             if result:
                 _, job_id = result
                 process_job(r, job_id)
         except redis.ConnectionError:
-            logger.warning("Redis connection lost — reconnecting...")
+            logger.warning("Redis-Verbindung verloren — reconnecting...")
             time.sleep(5)
-            r = get_redis()
+            try:
+                r = get_redis()
+            except Exception:
+                pass
         except Exception as e:
-            logger.error(f"Error processing job: {e}")
+            logger.error("Fehler bei Job-Verarbeitung: %s", e)
             time.sleep(1)
 
-    logger.info("Worker stopped gracefully")
+    # Aufraumen
+    pgvector_service.close()
+    logger.info("Worker ordnungsgemaess beendet")
 
 
 if __name__ == "__main__":

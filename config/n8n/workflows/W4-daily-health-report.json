@@ -1,0 +1,152 @@
+{
+  "name": "W4 — Taeglicher Health Report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Taeglich 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://ai-gateway:8000/health",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "check-ai-health",
+      "name": "AI Gateway Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [470, 200]
+    },
+    {
+      "parameters": {
+        "url": "http://uptime-kuma:3001/api/status-page/heartbeat",
+        "options": {
+          "timeout": 10000,
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "id": "check-uptime",
+      "name": "Uptime Kuma Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [470, 350],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "http://ai-gateway:8000/api/v1/jobs?limit=10",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.AI_GATEWAY_SECRET }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "get-recent-jobs",
+      "name": "Letzte AI Jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [470, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Health-Daten sammeln und Report erstellen\nconst aiHealth = $('AI Gateway Health').first().json;\nconst uptimeData = $('Uptime Kuma Status').first().json;\nconst recentJobs = $('Letzte AI Jobs').first().json;\n\nconst now = new Date().toLocaleString('de-DE', { timeZone: 'Europe/Berlin' });\n\nlet report = `MCP Daily Health Report — ${now}\\n`;\nreport += '='.repeat(50) + '\\n\\n';\n\n// AI Gateway Status\nreport += `AI Gateway: ${aiHealth.status || 'unknown'}\\n`;\nreport += `  Redis: ${aiHealth.redis || '?'}\\n`;\nreport += `  Ollama: ${aiHealth.ollama || '?'}\\n`;\nreport += `  pgvector: ${aiHealth.pgvector || '?'}\\n`;\nreport += `  LiteLLM: ${aiHealth.litellm || '?'}\\n`;\nreport += `  Zammad: ${aiHealth.zammad || '?'}\\n`;\nreport += `  ntfy: ${aiHealth.ntfy || '?'}\\n`;\nreport += `  Uptime: ${aiHealth.uptime_seconds || 0}s\\n\\n`;\n\n// Letzte Jobs\nconst jobs = recentJobs.jobs || [];\nreport += `Letzte ${jobs.length} AI-Analysen:\\n`;\njobs.forEach(job => {\n  const result = job.result || {};\n  report += `  - [${job.status}] ${job.source}: ${(job.description || '').substring(0, 60)}\\n`;\n  report += `    Impact: ${result.impact || '?'}, Confidence: ${result.confidence || '?'}\\n`;\n});\n\n// Severity bestimmen\nconst hasErrors = aiHealth.status !== 'healthy';\nconst severity = hasErrors ? 'Hoch' : 'Gering';\nconst priority = hasErrors ? '4' : '2';\n\nreturn [{\n  json: {\n    report,\n    title: `MCP Daily Report — ${aiHealth.status || 'unknown'}`,\n    priority,\n    tags: hasErrors ? 'warning,daily-report' : 'white_check_mark,daily-report'\n  }\n}];"
+      },
+      "id": "build-report",
+      "name": "Report erstellen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 350]
+    },
+    {
+      "parameters": {
+        "url": "http://ntfy:80/mcp-alerts",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Title",
+              "value": "={{ $json.title }}"
+            },
+            {
+              "name": "Priority",
+              "value": "={{ $json.priority }}"
+            },
+            {
+              "name": "Tags",
+              "value": "={{ $json.tags }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "raw",
+        "rawContentType": "text/plain",
+        "body": "={{ $json.report }}"
+      },
+      "id": "send-ntfy",
+      "name": "ntfy Daily Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [910, 350]
+    }
+  ],
+  "connections": {
+    "Taeglich 08:00": {
+      "main": [
+        [
+          {"node": "AI Gateway Health", "type": "main", "index": 0},
+          {"node": "Uptime Kuma Status", "type": "main", "index": 0},
+          {"node": "Letzte AI Jobs", "type": "main", "index": 0}
+        ]
+      ]
+    },
+    "AI Gateway Health": {
+      "main": [
+        [{"node": "Report erstellen", "type": "main", "index": 0}]
+      ]
+    },
+    "Uptime Kuma Status": {
+      "main": [
+        [{"node": "Report erstellen", "type": "main", "index": 0}]
+      ]
+    },
+    "Letzte AI Jobs": {
+      "main": [
+        [{"node": "Report erstellen", "type": "main", "index": 0}]
+      ]
+    },
+    "Report erstellen": {
+      "main": [
+        [{"node": "ntfy Daily Report", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {"name": "health"},
+    {"name": "daily-report"},
+    {"name": "ntfy"}
+  ]
+}
