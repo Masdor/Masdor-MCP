@@ -36,6 +36,7 @@ class PgvectorService:
         """Verbindung aus Pool holen und vector-Extension registrieren."""
         if not self._pool:
             return None
+        conn = None
         try:
             conn = self._pool.getconn()
             conn.autocommit = True
@@ -43,6 +44,11 @@ class PgvectorService:
             return conn
         except Exception as e:
             logger.error("pgvector Pool-Verbindung fehlgeschlagen: %s", e)
+            if conn is not None:
+                try:
+                    self._pool.putconn(conn)
+                except Exception:
+                    pass
             return None
 
     def _put_conn(self, conn):

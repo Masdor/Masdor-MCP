@@ -7,6 +7,13 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+if [ -f "${PROJECT_DIR}/.env" ]; then
+    set -a; source "${PROJECT_DIR}/.env"; set +a
+fi
+PROJECT="${COMPOSE_PROJECT_NAME:-mcp}"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -117,9 +124,9 @@ check_container "#32 redis-queue"  "mcp-redis-queue"
 echo ""
 
 # Summary
-total=$(docker ps --filter "label=com.docker.compose.project=mcp" -q 2>/dev/null | wc -l)
-healthy=$(docker ps --filter "label=com.docker.compose.project=mcp" --filter "health=healthy" -q 2>/dev/null | wc -l)
-unhealthy=$(docker ps --filter "label=com.docker.compose.project=mcp" --filter "health=unhealthy" -q 2>/dev/null | wc -l)
+total=$(docker ps --filter "label=com.docker.compose.project=${PROJECT}" -q 2>/dev/null | wc -l)
+healthy=$(docker ps --filter "label=com.docker.compose.project=${PROJECT}" --filter "health=healthy" -q 2>/dev/null | wc -l)
+unhealthy=$(docker ps --filter "label=com.docker.compose.project=${PROJECT}" --filter "health=unhealthy" -q 2>/dev/null | wc -l)
 
 echo "============================================"
 echo -e "  Running: ${GREEN}${total}${NC}  |  Healthy: ${GREEN}${healthy}${NC}  |  Unhealthy: ${RED}${unhealthy}${NC}"

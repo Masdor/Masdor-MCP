@@ -70,7 +70,7 @@ services:
     volumes:
       - ../../config/ai/models.yml:/app/config.yaml:ro
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=3).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveness', timeout=3).read()"]
       interval: 30s
       timeout: 10s
       retries: 10
@@ -215,7 +215,7 @@ services:
     volumes:
       - mcp-redis-queue-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_QUEUE_PASSWORD:-changeme}", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=${REDIS_QUEUE_PASSWORD:-changeme} redis-cli ping"]
       interval: 15s
       timeout: 5s
       retries: 5

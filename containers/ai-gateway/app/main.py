@@ -168,7 +168,7 @@ async def health():
     # LiteLLM
     litellm_status = "error"
     try:
-        resp = await client.get(f"{settings.litellm_host}/health/liveliness")
+        resp = await client.get(f"{settings.litellm_host}/health/liveness")
         litellm_status = "ok" if resp.status_code == 200 else "error"
     except Exception as e:
         logger.warning("Health: LiteLLM nicht erreichbar: %s", e)
@@ -212,7 +212,11 @@ async def health():
 # ---------------------------------------------------------------------------
 @app.get("/metrics")
 async def metrics():
-    """Prometheus-Metriken im OpenMetrics-Format."""
+    """Prometheus-Metriken im OpenMetrics-Format.
+
+    Absichtlich ohne Auth — /metrics ist nur aus mcp-ai-net und mcp-app-net
+    erreichbar (interne Netzwerke). Grafana scraped diesen Endpoint direkt.
+    """
     try:
         r = get_redis()
         queue_len = r.llen("mcp:queue:analyze")

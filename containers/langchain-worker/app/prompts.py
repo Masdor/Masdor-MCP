@@ -8,7 +8,8 @@ from app.config import settings
 
 logger = logging.getLogger("mcp-langchain-worker")
 
-# Cache fuer geladenen Prompt
+# Cache fuer geladenen Prompt (einmalig geladen, danach gecacht).
+# Aenderungen an der Prompt-Datei erfordern einen Container-Restart.
 _prompt_template: str | None = None
 
 # Fallback-Prompt falls Datei nicht verfuegbar

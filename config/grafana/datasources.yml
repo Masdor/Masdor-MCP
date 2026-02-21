@@ -30,7 +30,7 @@ datasources:
     url: postgres:5432
     editable: false
     jsonData:
-      database: mcp_core
+      database: grafana
       sslmode: disable
       user: ${GRAFANA_DB_USER}
     secureJsonData:
