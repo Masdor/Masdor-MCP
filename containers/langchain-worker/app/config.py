@@ -48,7 +48,6 @@ class Settings:
 
     # Pfade
     prompt_file: str = os.getenv("PROMPT_FILE", "/app/config/prompts/alert-analysis.txt")
-    rag_config_file: str = os.getenv("RAG_CONFIG_FILE", "/app/config/rag-config.yml")
 
     @property
     def pgvector_dsn(self) -> str:

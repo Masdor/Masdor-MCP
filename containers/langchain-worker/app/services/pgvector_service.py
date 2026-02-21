@@ -1,5 +1,6 @@
 """MCP v7 — pgvector RAG-Service (synchron, fuer den Worker) mit Connection-Pooling."""
 
+import hashlib
 import json
 import logging
 
@@ -120,22 +121,29 @@ class PgvectorService:
         source_id: str | None = None,
         metadata: dict | None = None,
     ) -> int | None:
-        """Embedding in pgvector speichern."""
+        """Embedding in pgvector speichern (mit Content-Hash-Deduplizierung)."""
         conn = self._get_conn()
         if not conn:
             return None
+
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
         try:
             embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO embeddings (content, embedding, source_type, source_id, metadata)
-                    VALUES (%s, %s::vector, %s, %s, %s::jsonb)
+                    INSERT INTO embeddings
+                        (content, content_hash, embedding, source_type, source_id, metadata)
+                    VALUES (%s, %s, %s::vector, %s, %s, %s::jsonb)
+                    ON CONFLICT (content_hash, source_type)
+                        WHERE content_hash IS NOT NULL
+                    DO NOTHING
                     RETURNING id
                     """,
                     (
                         content,
+                        content_hash,
                         embedding_str,
                         source_type,
                         source_id,
@@ -143,6 +151,8 @@ class PgvectorService:
                     ),
                 )
                 row = cur.fetchone()
+                if row is None:
+                    logger.info("Embedding-Duplikat uebersprungen (Hash: %s...)", content_hash[:12])
                 return row[0] if row else None
         except Exception as e:
             logger.error("Embedding-Speicherung fehlgeschlagen: %s", e, exc_info=True)

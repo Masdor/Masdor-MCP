@@ -1,5 +1,6 @@
 """MCP v7 — RAG-Service mit pgvector fuer Aehnlichkeitssuche (async)."""
 
+import hashlib
 import json
 import logging
 
@@ -94,25 +95,34 @@ class RAGService:
         source_id: str | None = None,
         metadata: dict | None = None,
     ) -> int | None:
-        """Embedding in pgvector speichern."""
+        """Embedding in pgvector speichern (mit Content-Hash-Deduplizierung)."""
         if not self.pool:
             return None
+
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
         try:
             embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
             async with self.pool.acquire() as conn:
                 row_id = await conn.fetchval(
                     """
-                    INSERT INTO embeddings (content, embedding, source_type, source_id, metadata)
-                    VALUES ($1, $2::vector, $3, $4, $5::jsonb)
+                    INSERT INTO embeddings
+                        (content, content_hash, embedding, source_type, source_id, metadata)
+                    VALUES ($1, $2, $3::vector, $4, $5, $6::jsonb)
+                    ON CONFLICT (content_hash, source_type)
+                        WHERE content_hash IS NOT NULL
+                    DO NOTHING
                     RETURNING id
                     """,
                     content,
+                    content_hash,
                     embedding_str,
                     source_type,
                     source_id,
                     json.dumps(metadata or {}),
                 )
+                if row_id is None:
+                    logger.info("Embedding-Duplikat uebersprungen (Hash: %s...)", content_hash[:12])
                 return row_id
         except Exception as e:
             logger.error("Embedding-Speicherung fehlgeschlagen: %s", e, exc_info=True)

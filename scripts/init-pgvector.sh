@@ -32,6 +32,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     CREATE TABLE IF NOT EXISTS embeddings (
         id              SERIAL PRIMARY KEY,
         content         TEXT NOT NULL,
+        content_hash    VARCHAR(64),
         embedding       vector(768),
         source_type     VARCHAR(50) DEFAULT 'manual',
         source_id       VARCHAR(255),
@@ -47,6 +48,10 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     -- Index fuer Quell-Filterung
     CREATE INDEX IF NOT EXISTS idx_embeddings_source
         ON embeddings (source_type, source_id);
+
+    -- Unique-Index fuer Content-Deduplizierung (gleicher Inhalt + Quelltyp)
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_embeddings_content_hash
+        ON embeddings (content_hash, source_type) WHERE content_hash IS NOT NULL;
 
     -- Index fuer Tenant-Isolation
     CREATE INDEX IF NOT EXISTS idx_embeddings_tenant

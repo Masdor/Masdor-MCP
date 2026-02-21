@@ -424,7 +424,7 @@ async def ingest(
 
 
 def _chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
-    """Text in ueberlappende Chunks aufteilen."""
+    """Text in ueberlappende Chunks aufteilen (an Satz-/Wort-Grenzen)."""
     if len(text) <= chunk_size:
         return [text]
 
@@ -432,10 +432,29 @@ def _chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
     start = 0
     while start < len(text):
         end = start + chunk_size
-        chunk = text[start:end]
-        if chunk.strip():
-            chunks.append(chunk.strip())
-        start += chunk_size - overlap
+
+        # Chunk-Ende an Satz- oder Wort-Grenze ausrichten
+        if end < len(text):
+            # Suche rueckwaerts nach Satz-Ende (.!?\n) im letzten 20% des Chunks
+            search_start = max(start, end - chunk_size // 5)
+            best_break = -1
+            for i in range(end, search_start, -1):
+                if text[i - 1] in ".!?\n":
+                    best_break = i
+                    break
+            # Fallback: Wort-Grenze (Leerzeichen)
+            if best_break == -1:
+                for i in range(end, search_start, -1):
+                    if text[i - 1] == " ":
+                        best_break = i
+                        break
+            if best_break > start:
+                end = best_break
+
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        start = end - overlap if end - overlap > start else end
     return chunks
 
 

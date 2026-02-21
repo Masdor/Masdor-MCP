@@ -122,7 +122,6 @@ services:
       - /tmp:size=64m
     volumes:
       - ../../config/ai/prompts:/app/config/prompts:ro
-      - ../../config/ai/rag-config.yml:/app/config/rag-config.yml:ro
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f 'python.*worker' || exit 1"]
       interval: 30s
