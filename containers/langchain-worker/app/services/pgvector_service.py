@@ -37,12 +37,13 @@ class PgvectorService:
             self._pool = None
 
     def _get_conn(self):
-        """Verbindung aus Pool holen."""
+        """Verbindung aus Pool holen und vector-Extension registrieren."""
         if not self._pool:
             return None
         try:
             conn = self._pool.getconn()
             conn.autocommit = True
+            register_vector(conn)  # Muss fuer jede Connection aufgerufen werden
             return conn
         except Exception as e:
             logger.error("pgvector Pool-Verbindung fehlgeschlagen: %s", e)

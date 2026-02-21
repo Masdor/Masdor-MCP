@@ -20,6 +20,7 @@ class Settings:
     # Redis
     redis_queue_host: str = os.getenv("REDIS_QUEUE_HOST", "redis-queue")
     redis_queue_port: int = int(os.getenv("REDIS_QUEUE_PORT", "6379"))
+    redis_queue_password: str = os.getenv("REDIS_QUEUE_PASSWORD", "")
     redis_pool_max: int = int(os.getenv("REDIS_POOL_MAX", "20"))
 
     # pgvector

@@ -13,6 +13,16 @@ logger = logging.getLogger("mcp-langchain-worker")
 class ZammadClient:
     """Synchroner Zammad-Client fuer Ticket-Erstellung mit Retry-Logik."""
 
+    def __init__(self):
+        self._client = httpx.Client(
+            base_url=settings.zammad_url,
+            timeout=15.0,
+            headers={
+                "Authorization": f"Token token={settings.zammad_token}",
+                "Content-Type": "application/json",
+            },
+        )
+
     def create_ticket(
         self,
         title: str,
@@ -28,31 +38,26 @@ class ZammadClient:
 
         for attempt in range(3):
             try:
-                with httpx.Client(timeout=15.0) as client:
-                    resp = client.post(
-                        f"{settings.zammad_url}/api/v1/tickets",
-                        headers={
-                            "Authorization": f"Token token={settings.zammad_token}",
-                            "Content-Type": "application/json",
+                resp = self._client.post(
+                    "/api/v1/tickets",
+                    json={
+                        "title": title,
+                        "group": group,
+                        "article": {
+                            "subject": title,
+                            "body": body,
+                            "type": "note",
+                            "internal": False,
+                            "content_type": "text/html",
                         },
-                        json={
-                            "title": title,
-                            "group": group,
-                            "article": {
-                                "subject": title,
-                                "body": body,
-                                "type": "note",
-                                "internal": False,
-                                "content_type": "text/html",
-                            },
-                            "priority_id": priority_id,
-                            "tags": tags,
-                        },
-                    )
-                    resp.raise_for_status()
-                    ticket = resp.json()
-                    logger.info("Zammad-Ticket #%s erstellt: %s", ticket.get("id"), title)
-                    return ticket
+                        "priority_id": priority_id,
+                        "tags": tags,
+                    },
+                )
+                resp.raise_for_status()
+                ticket = resp.json()
+                logger.info("Zammad-Ticket #%s erstellt: %s", ticket.get("id"), title)
+                return ticket
             except httpx.TimeoutException as e:
                 wait = 2 ** (attempt + 1)
                 logger.warning("Zammad Timeout Versuch %d: %s — Retry in %ds", attempt + 1, e, wait)
