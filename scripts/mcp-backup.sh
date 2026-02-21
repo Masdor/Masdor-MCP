@@ -15,7 +15,7 @@ BACKUP_PATH="${BACKUP_DIR}/mcp-backup-${TIMESTAMP}"
 # Cleanup bei Fehler
 cleanup() {
     local exit_code=$?
-    if [ $exit_code -ne 0 ]; then
+    if [ "$exit_code" -ne 0 ]; then
         echo ""
         echo "FEHLER: Backup fehlgeschlagen (Exit-Code: ${exit_code})"
         if [ -d "${BACKUP_PATH}" ]; then
@@ -36,7 +36,11 @@ echo "============================================"
 # Disk-Space pruefen (mindestens 5 GB frei)
 # ---------------------------------------------------------------------------
 mkdir -p "${BACKUP_DIR}"
-available_kb=$(df "${BACKUP_DIR}" | awk 'NR==2 {print $4}')
+available_kb=$(df "${BACKUP_DIR}" 2>/dev/null | awk 'NR==2 {print $4}')
+if [ -z "$available_kb" ] || ! [[ "$available_kb" =~ ^[0-9]+$ ]]; then
+    echo "FEHLER: Konnte freien Speicherplatz auf ${BACKUP_DIR} nicht ermitteln"
+    exit 1
+fi
 available_gb=$((available_kb / 1024 / 1024))
 if [ "$available_gb" -lt 5 ]; then
     echo "FEHLER: Nur ${available_gb} GB frei auf ${BACKUP_DIR} (Minimum: 5 GB)"
@@ -123,7 +127,14 @@ done
 echo ""
 echo "[4/4] Komprimiere Backup..."
 cd "${BACKUP_DIR}"
-tar czf "mcp-backup-${TIMESTAMP}.tar.gz" "mcp-backup-${TIMESTAMP}/"
+if ! tar czf "mcp-backup-${TIMESTAMP}.tar.gz" "mcp-backup-${TIMESTAMP}/"; then
+    echo "FEHLER: tar-Komprimierung fehlgeschlagen"
+    exit 1
+fi
+if [ ! -f "mcp-backup-${TIMESTAMP}.tar.gz" ]; then
+    echo "FEHLER: Backup-Archiv wurde nicht erstellt"
+    exit 1
+fi
 rm -rf "${BACKUP_PATH}"
 
 FINAL_SIZE=$(du -sh "${BACKUP_DIR}/mcp-backup-${TIMESTAMP}.tar.gz" | cut -f1)

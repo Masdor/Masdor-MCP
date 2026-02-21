@@ -27,6 +27,12 @@ SEVERITY_PRIORITY = {
 class NtfyClient:
     """Push-Benachrichtigungen ueber ntfy senden mit Retry-Logik."""
 
+    def __init__(self):
+        self._client = httpx.Client(
+            base_url=settings.ntfy_url,
+            timeout=10.0,
+        )
+
     def send_notification(
         self,
         title: str,
@@ -47,17 +53,18 @@ class NtfyClient:
         if click_url:
             headers["Click"] = click_url
 
+        max_len = settings.ntfy_max_message_length
+
         for attempt in range(2):
             try:
-                with httpx.Client(timeout=10.0) as client:
-                    resp = client.post(
-                        f"{settings.ntfy_url}/mcp-alerts",
-                        content=message[:4000],
-                        headers=headers,
-                    )
-                    resp.raise_for_status()
-                    logger.info("ntfy-Benachrichtigung gesendet: %s (Prioritaet: %d)", title, priority)
-                    return True
+                resp = self._client.post(
+                    "/mcp-alerts",
+                    content=message[:max_len],
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                logger.info("ntfy-Benachrichtigung gesendet: %s (Prioritaet: %d)", title, priority)
+                return True
             except Exception as e:
                 if attempt == 0:
                     logger.warning("ntfy Versuch 1 fehlgeschlagen: %s — Retry", e)

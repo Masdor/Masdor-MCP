@@ -52,6 +52,7 @@ def get_redis() -> redis.Redis:
     return redis.Redis(
         host=settings.redis_queue_host,
         port=settings.redis_queue_port,
+        password=settings.redis_queue_password or None,
         decode_responses=True,
         socket_connect_timeout=5,
         socket_timeout=10,
@@ -222,6 +223,9 @@ def process_job(r: redis.Redis, job_id: str) -> None:
         "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     r.hset(f"mcp:job:{job_id}", mapping=result_data)
+
+    # TTL setzen: Job-Daten nach 7 Tagen automatisch loeschen
+    r.expire(f"mcp:job:{job_id}", 604800)
 
     # 9. Analyse-Ergebnis in pgvector speichern (fuer zukuenftige RAG-Suche)
     try:

@@ -13,6 +13,20 @@ logger = logging.getLogger("mcp-langchain-worker")
 class LLMClient:
     """Synchroner LLM-Client: versucht LiteLLM, faellt auf Ollama zurueck."""
 
+    def __init__(self):
+        self._litellm_client = httpx.Client(
+            base_url=settings.litellm_host,
+            timeout=120.0,
+        )
+        self._ollama_client = httpx.Client(
+            base_url=settings.ollama_host,
+            timeout=120.0,
+        )
+        self._embed_client = httpx.Client(
+            base_url=settings.ollama_host,
+            timeout=30.0,
+        )
+
     def generate(self, prompt: str, system: str | None = None) -> dict:
         """LLM-Anfrage mit LiteLLM-First, Ollama-Fallback."""
         # Versuch 1: LiteLLM (OpenAI-kompatibles Format)
@@ -36,27 +50,26 @@ class LLMClient:
         for attempt in range(2):
             try:
                 start = time.monotonic()
-                with httpx.Client(timeout=120.0) as client:
-                    resp = client.post(
-                        f"{settings.litellm_host}/chat/completions",
-                        json={
-                            "model": settings.primary_model,
-                            "messages": messages,
-                            "temperature": 0.1,
-                            "max_tokens": 2048,
-                        },
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    elapsed_ms = int((time.monotonic() - start) * 1000)
+                resp = self._litellm_client.post(
+                    "/chat/completions",
+                    json={
+                        "model": settings.primary_model,
+                        "messages": messages,
+                        "temperature": 0.1,
+                        "max_tokens": 2048,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                elapsed_ms = int((time.monotonic() - start) * 1000)
 
-                    content = data["choices"][0]["message"]["content"]
-                    return {
-                        "response": content,
-                        "model": data.get("model", settings.primary_model),
-                        "latency_ms": elapsed_ms,
-                        "via": "litellm",
-                    }
+                content = data["choices"][0]["message"]["content"]
+                return {
+                    "response": content,
+                    "model": data.get("model", settings.primary_model),
+                    "latency_ms": elapsed_ms,
+                    "via": "litellm",
+                }
             except Exception as e:
                 if attempt == 0:
                     logger.warning("LiteLLM Versuch 1 fehlgeschlagen: %s — Retry", e)
@@ -79,21 +92,17 @@ class LLMClient:
         for attempt in range(3):
             try:
                 start = time.monotonic()
-                with httpx.Client(timeout=120.0) as client:
-                    resp = client.post(
-                        f"{settings.ollama_host}/api/generate",
-                        json=payload,
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    elapsed_ms = int((time.monotonic() - start) * 1000)
+                resp = self._ollama_client.post("/api/generate", json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                elapsed_ms = int((time.monotonic() - start) * 1000)
 
-                    return {
-                        "response": data.get("response", ""),
-                        "model": settings.primary_model,
-                        "latency_ms": elapsed_ms,
-                        "via": "ollama",
-                    }
+                return {
+                    "response": data.get("response", ""),
+                    "model": settings.primary_model,
+                    "latency_ms": elapsed_ms,
+                    "via": "ollama",
+                }
             except Exception as e:
                 wait = 2 ** (attempt + 1)
                 logger.warning(
@@ -109,15 +118,14 @@ class LLMClient:
         """Embedding-Vektor generieren via Ollama mit Retry."""
         for attempt in range(3):
             try:
-                with httpx.Client(timeout=30.0) as client:
-                    resp = client.post(
-                        f"{settings.ollama_host}/api/embed",
-                        json={"model": settings.embedding_model, "input": text},
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    embeddings = data.get("embeddings", [[]])
-                    return embeddings[0] if embeddings else []
+                resp = self._embed_client.post(
+                    "/api/embed",
+                    json={"model": settings.embedding_model, "input": text},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                embeddings = data.get("embeddings", [[]])
+                return embeddings[0] if embeddings else []
             except Exception as e:
                 wait = 2 ** (attempt + 1)
                 logger.warning("Embedding Versuch %d fehlgeschlagen: %s", attempt + 1, e)

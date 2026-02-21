@@ -77,6 +77,7 @@ def get_redis() -> redis.Redis:
         _redis_pool = redis.ConnectionPool(
             host=settings.redis_queue_host,
             port=settings.redis_queue_port,
+            password=settings.redis_queue_password or None,
             decode_responses=True,
             max_connections=settings.redis_pool_max,
             socket_connect_timeout=5,
@@ -267,6 +268,9 @@ async def analyze(
 
     r.hset(f"mcp:job:{job_id}", mapping=job_data)
     r.lpush("mcp:queue:analyze", job_id)
+
+    # TTL als Sicherheitsnetz: falls Worker den Job nie abholt
+    r.expire(f"mcp:job:{job_id}", 86400)  # 24h fuer unbearbeitete Jobs
 
     return AnalyzeResponse(
         status="queued",

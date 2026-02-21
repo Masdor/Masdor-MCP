@@ -18,7 +18,11 @@ FAIL=0
 
 # Load env
 if [ -f .env ]; then
-    set -a; source .env; set +a
+    set -a
+    if ! source .env 2>/dev/null; then
+        echo -e "${RED}WARNUNG: .env hat Syntax-Fehler — einige Variablen fehlen moeglicherweise${NC}"
+    fi
+    set +a
 fi
 
 check() {
