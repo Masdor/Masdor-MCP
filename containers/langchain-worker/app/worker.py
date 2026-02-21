@@ -177,7 +177,7 @@ def process_job(r: redis.Redis, job_id: str) -> None:
             f"<h2>{ticket_title}</h2>"
             f"<p><strong>Root Cause:</strong> {analysis.get('root_cause', 'N/A')}</p>"
             f"<p><strong>Impact:</strong> {analysis.get('impact', 'N/A')}</p>"
-            f"<p><strong>Betroffene Services:</strong> {', '.join(analysis.get('affected_services', []))}</p>"
+            f"<p><strong>Betroffene Services:</strong> {', '.join(analysis.get('affected_services') or [])}</p>"
             f"<h3>Sofortmassnahme</h3><p>{analysis.get('immediate_action', 'N/A')}</p>"
             f"<h3>Langfristige Loesung</h3><p>{analysis.get('long_term_solution', 'N/A')}</p>"
             f"<hr><p><em>AI Confidence: {analysis.get('confidence', 'N/A')} — "

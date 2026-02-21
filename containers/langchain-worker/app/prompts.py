@@ -2,6 +2,7 @@
 
 import logging
 import os
+import time
 
 from app.config import settings
 
@@ -87,7 +88,6 @@ def build_prompt(job_data: dict, rag_results: list[dict] | None = None) -> str:
         rag_text = "\n".join(entries)
 
     # Platzhalter befuellen
-    import time
     prompt = template.format(
         alert_type=job_data.get("source", "unknown"),
         source=job_data.get("source", "unknown"),

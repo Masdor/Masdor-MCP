@@ -57,8 +57,13 @@ prometheus.scrape "ai_gateway" {
   forward_to = [prometheus.remote_write.default.receiver]
 }
 
-prometheus.remote_write "default" {
-  endpoint {
-    url = "http://loki:3100/loki/api/v1/push"
-  }
-}
+// Hinweis: Kein Prometheus/Mimir im Stack vorhanden.
+// Metriken werden direkt von Grafana via Prometheus-Datasource gescraped.
+// Grafana Datasource: http://ai-gateway:8000/metrics (konfiguriert in datasources.yml)
+//
+// Falls spaeter Prometheus/Mimir hinzugefuegt wird:
+// prometheus.remote_write "default" {
+//   endpoint {
+//     url = "http://prometheus:9090/api/v1/write"
+//   }
+// }

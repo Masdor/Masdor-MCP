@@ -74,6 +74,11 @@ class ZammadClient:
                     return None
                 time.sleep(wait)
             except httpx.HTTPStatusError as e:
+                if e.response.status_code >= 500 and attempt < 2:
+                    wait = 2 ** (attempt + 1)
+                    logger.warning("Zammad HTTP %d Versuch %d — Retry in %ds", e.response.status_code, attempt + 1, wait)
+                    time.sleep(wait)
+                    continue
                 logger.error("Zammad HTTP-Fehler %d: %s", e.response.status_code, e)
                 return None
             except Exception as e:
