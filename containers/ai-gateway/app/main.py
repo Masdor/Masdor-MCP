@@ -461,7 +461,10 @@ def _chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
         chunk = text[start:end].strip()
         if chunk:
             chunks.append(chunk)
-        start = end - overlap if end - overlap > start else end
+        # Mindest-Fortschritt: chunk_size // 2 verhindert extrem langsame Iteration
+        # bei hohem overlap (z.B. overlap = chunk_size - 1)
+        min_step = max(chunk_size // 2, 1)
+        start = max(end - overlap, start + min_step)
     return chunks
 
 

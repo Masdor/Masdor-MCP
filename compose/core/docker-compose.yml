@@ -119,6 +119,9 @@ services:
 
   # --------------------------------------------------------------------------
   # #4 — OpenBao (Secrets Management)
+  # WARNING: Running in DEV MODE — all secrets are stored in RAM only!
+  # On container restart ALL secrets are lost. For production, configure
+  # file/PostgreSQL storage backend, TLS, and seal configuration.
   # --------------------------------------------------------------------------
   openbao:
     image: openbao/openbao:${OPENBAO_TAG:-2.1}

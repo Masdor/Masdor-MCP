@@ -96,7 +96,7 @@ check "   Zammad Init"       "mcp-zammad-init"      exited_ok
 check "#9 Zammad Rails"      "mcp-zammad-rails"     healthy
 check "#10 Zammad WS"        "mcp-zammad-websocket" healthy
 check "#11 Zammad Scheduler"  "mcp-zammad-scheduler" healthy
-check "   Zammad Memcached"  "mcp-zammad-memcached" running
+check "   Zammad Memcached"  "mcp-zammad-memcached" healthy
 check "#12 Elasticsearch"    "mcp-elasticsearch"    healthy
 check "   BookStack DB"      "mcp-bookstack-db"     healthy
 check "#13 BookStack"        "mcp-bookstack"        healthy
@@ -113,7 +113,7 @@ check "#20 Loki"             "mcp-loki"             healthy
 check "#21 Alloy"            "mcp-alloy"            healthy
 check "#22 Uptime Kuma"      "mcp-uptime-kuma"      healthy
 check "#23 CrowdSec"         "mcp-crowdsec"         healthy
-check "#24 Grafana Renderer" "mcp-grafana-renderer" running
+check "#24 Grafana Renderer" "mcp-grafana-renderer" healthy
 echo ""
 
 echo "=== Remote Stack ==="
