@@ -94,6 +94,7 @@ VOLUMES=(
     mcp-redis-data
     mcp-pgvector-data
     mcp-n8n-data
+    mcp-nginx-logs
     mcp-grafana-data
     mcp-loki-data
     mcp-elasticsearch-data
@@ -109,8 +110,8 @@ VOLUMES=(
     mcp-guacamole-initdb
     mcp-ollama-data
     mcp-redis-queue-data
-    mcp-keycloak-data
     mcp-ntfy-cache
+    # NOTE: mcp-keycloak-data not backed up — Keycloak stores data in PostgreSQL
 )
 
 mkdir -p "${BACKUP_PATH}/volumes"

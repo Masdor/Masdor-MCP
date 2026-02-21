@@ -28,6 +28,10 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
+# Source .env for project name and suppress orphan warnings
+set -a; source .env; set +a
+export COMPOSE_IGNORE_ORPHANS=1
+
 ENV_FILE="--env-file .env"
 
 echo ""

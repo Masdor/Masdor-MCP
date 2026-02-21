@@ -161,7 +161,7 @@ services:
     volumes:
       - mcp-guacamole-data:/drive
     healthcheck:
-      test: ["CMD-SHELL", "echo > /dev/tcp/127.0.0.1/4822"]
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/4822' 2>/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 5

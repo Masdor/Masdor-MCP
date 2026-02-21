@@ -49,6 +49,8 @@ services:
           memory: 2G
           cpus: "2.0"
     logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
 
   # --------------------------------------------------------------------------
   # #9 — Zammad Rails (Web UI)

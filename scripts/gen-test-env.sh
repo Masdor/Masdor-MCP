@@ -49,7 +49,7 @@ echo "Generating .env from .env.example..."
 cp "$EXAMPLE_FILE" "$ENV_FILE"
 
 # Set WSL/test defaults
-sed -i "s|^COMPOSE_PROJECT_NAME=.*|COMPOSE_PROJECT_NAME=mcpwsl|" "$ENV_FILE"
+sed -i "s|^COMPOSE_PROJECT_NAME=.*|COMPOSE_PROJECT_NAME=mcp|" "$ENV_FILE"
 sed -i "s|^MCP_HOST_IP=.*|MCP_HOST_IP=127.0.0.1|" "$ENV_FILE"
 
 # Replace all CHANGE_ME values with random secrets
@@ -76,7 +76,7 @@ else
 fi
 
 echo "Generated: ${ENV_FILE}"
-echo "Project name: mcpwsl"
+echo "Project name: mcp"
 echo "Host IP: 127.0.0.1"
 echo ""
 echo "Next: sudo bash scripts/mcp-install.sh"
