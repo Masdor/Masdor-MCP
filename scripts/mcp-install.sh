@@ -353,6 +353,8 @@ phase4_ops() {
         gate_fail "phase4" "mcp-portainer not running" "Check logs: docker logs mcp-portainer --tail 100"
     fi
 
+    log_warn "IMPORTANT: Open http://${MCP_HOST_IP:-localhost}/portainer/ within 5 minutes to create the admin account!"
+
     log_ok "Phase 4: Ops Stack PASSED"
     echo ""
 }

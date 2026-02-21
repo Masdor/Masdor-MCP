@@ -24,6 +24,16 @@ datasources:
       trendsRange: "4d"
       cacheTTL: "1h"
 
+  # NOTE: Kein Prometheus-Datasource konfiguriert. AI Gateway /metrics produziert
+  # Prometheus-Format, aber ohne Prometheus/Mimir im Stack koennen diese Metriken
+  # nicht in Grafana visualisiert werden. Falls Prometheus hinzugefuegt wird:
+  # - name: Prometheus
+  #   type: prometheus
+  #   access: proxy
+  #   url: http://prometheus:9090
+  #   isDefault: false
+  #   editable: false
+
   - name: PostgreSQL
     type: postgres
     access: proxy
