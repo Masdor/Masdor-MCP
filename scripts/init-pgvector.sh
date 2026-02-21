@@ -86,9 +86,32 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
 EOSQL
 
 # ---------------------------------------------------------------------------
-# 4. Zusammenfassung
+# 4. Migration: content_hash Spalte fuer bestehende Installationen
 # ---------------------------------------------------------------------------
-echo "[4/4] Verifiziere Installation..."
+echo "[4/5] Pruefe Migration (content_hash)..."
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    -- Migration: content_hash Spalte hinzufuegen (idempotent)
+    DO \$\$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'embeddings' AND column_name = 'content_hash'
+        ) THEN
+            ALTER TABLE embeddings ADD COLUMN content_hash VARCHAR(64);
+            RAISE NOTICE 'content_hash Spalte hinzugefuegt';
+        END IF;
+    END
+    \$\$;
+
+    -- Index wird nur erstellt wenn er noch nicht existiert (IF NOT EXISTS)
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_embeddings_content_hash
+        ON embeddings (content_hash, source_type) WHERE content_hash IS NOT NULL;
+EOSQL
+
+# ---------------------------------------------------------------------------
+# 5. Zusammenfassung
+# ---------------------------------------------------------------------------
+echo "[5/5] Verifiziere Installation..."
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
     SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';
     SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;
