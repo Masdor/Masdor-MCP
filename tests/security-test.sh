@@ -8,7 +8,11 @@
 set -euo pipefail
 
 # Load env for project name
-if [ -f .env ]; then set -a; source .env; set +a; fi
+if [ -f .env ]; then
+    set -a
+    source .env 2>/dev/null || true
+    set +a
+fi
 PROJECT="${COMPOSE_PROJECT_NAME:-mcp}"
 
 RED='\033[0;31m'

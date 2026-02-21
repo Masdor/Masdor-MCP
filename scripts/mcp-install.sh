@@ -84,7 +84,7 @@ wait_healthy() {
     local timeout="${2:-120}"
     local elapsed=0
 
-    while [ $elapsed -lt "$timeout" ]; do
+    while [ "$elapsed" -lt "$timeout" ]; do
         local status
         status=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "not_found")
         case "$status" in
@@ -322,7 +322,7 @@ phase4_ops() {
     log_info "Waiting for Zammad init to complete (this may take a few minutes)..."
     local timeout=300
     local elapsed=0
-    while [ $elapsed -lt $timeout ]; do
+    while [ "$elapsed" -lt "$timeout" ]; do
         local exit_code
         exit_code=$(docker inspect --format='{{.State.ExitCode}}' mcp-zammad-init 2>/dev/null || echo "-1")
         local running
@@ -475,6 +475,11 @@ main() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --resume-from)
+                if [ -z "${2:-}" ]; then
+                    log_error "Missing argument for --resume-from"
+                    echo "Usage: sudo bash scripts/mcp-install.sh --resume-from phase3"
+                    exit 1
+                fi
                 start_phase="${2//[!0-9]/}"
                 if [ -z "$start_phase" ] || [ "$start_phase" -lt 1 ] || [ "$start_phase" -gt 7 ]; then
                     log_error "Invalid phase: '$2' — must be phase1 through phase7"
@@ -485,6 +490,11 @@ main() {
                 shift 2
                 ;;
             --only)
+                if [ -z "${2:-}" ]; then
+                    log_error "Missing argument for --only"
+                    echo "Usage: sudo bash scripts/mcp-install.sh --only phase6"
+                    exit 1
+                fi
                 only_phase="${2//[!0-9]/}"
                 if [ -z "$only_phase" ] || [ "$only_phase" -lt 1 ] || [ "$only_phase" -gt 7 ]; then
                     log_error "Invalid phase: '$2' — must be phase1 through phase7"

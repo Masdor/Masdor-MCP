@@ -33,6 +33,11 @@ class Settings:
 
     # ntfy
     ntfy_url: str = os.getenv("NTFY_URL", "http://ntfy:80")
+    ntfy_max_message_length: int = int(os.getenv("NTFY_MAX_MESSAGE_LENGTH", "4000"))
+
+    # Redis Reconnect
+    redis_max_connect_retries: int = int(os.getenv("REDIS_MAX_CONNECT_RETRIES", "30"))
+    redis_reconnect_delay: int = int(os.getenv("REDIS_RECONNECT_DELAY", "2"))
 
     # RAG-Konfiguration
     rag_top_k: int = int(os.getenv("RAG_TOP_K", "5"))
