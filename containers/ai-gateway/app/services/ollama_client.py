@@ -48,7 +48,7 @@ class OllamaClient:
             except (httpx.HTTPStatusError, httpx.ConnectError, httpx.ReadTimeout) as e:
                 wait = 2 ** (attempt + 1)
                 logger.warning(
-                    "Ollama Versuch %d fehlgeschlagen: %s — Retry in %ds",
+                    "Ollama generate Versuch %d fehlgeschlagen: %s — Retry in %ds",
                     attempt + 1, e, wait,
                 )
                 if attempt == 2:
@@ -57,16 +57,39 @@ class OllamaClient:
         return {}
 
     async def embed(self, text: str, model: str | None = None) -> list[float]:
-        """Embedding-Vektor generieren."""
+        """Embedding-Vektor generieren mit Retry-Logik (3 Versuche)."""
         model = model or settings.embedding_model
-        resp = await self.client.post(
-            "/api/embed",
-            json={"model": model, "input": text},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        embeddings = data.get("embeddings", [[]])
-        return embeddings[0] if embeddings else []
+
+        for attempt in range(3):
+            try:
+                resp = await self.client.post(
+                    "/api/embed",
+                    json={"model": model, "input": text},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                embeddings = data.get("embeddings", [[]])
+                result = embeddings[0] if embeddings else []
+
+                if result and settings.expected_embedding_dimensions:
+                    if len(result) != settings.expected_embedding_dimensions:
+                        logger.warning(
+                            "Embedding-Dimension %d weicht von erwartet %d ab",
+                            len(result), settings.expected_embedding_dimensions,
+                        )
+
+                return result
+            except (httpx.HTTPStatusError, httpx.ConnectError, httpx.ReadTimeout) as e:
+                wait = 2 ** (attempt + 1)
+                logger.warning(
+                    "Ollama embed Versuch %d fehlgeschlagen: %s — Retry in %ds",
+                    attempt + 1, e, wait,
+                )
+                if attempt == 2:
+                    logger.error("Embedding endgueltig fehlgeschlagen nach 3 Versuchen")
+                    return []
+                await asyncio.sleep(wait)
+        return []
 
     async def list_models(self) -> list[dict]:
         """Verfuegbare Ollama-Modelle auflisten."""

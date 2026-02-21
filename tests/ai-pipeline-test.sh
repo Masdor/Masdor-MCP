@@ -74,9 +74,9 @@ echo "=== Step 3: Redis Queue ==="
 redis_ping=$(docker exec mcp-redis-queue redis-cli ping 2>/dev/null || echo "")
 check "Redis Queue responds to PING" "$([ "$redis_ping" = "PONG" ] && echo 0 || echo 1)"
 
-# 4. Send test alert via Python stdlib
+# 4. Send test alert via Python stdlib (UUID fuer eindeutige Korrelation)
 echo "=== Step 4: Send Test Alert ==="
-TIMESTAMP=$(date +%s)
+TEST_UUID=$(python3 -c "import uuid; print(uuid.uuid4().hex[:12])" 2>/dev/null || date +%s)
 analyze_result=$(docker exec -e AI_GATEWAY_SECRET="${AI_GATEWAY_SECRET:-}" mcp-ai-gateway python -c "
 import urllib.request, json, sys, os
 
@@ -86,9 +86,9 @@ payload = json.dumps({
     'source': 'test',
     'severity': 'warning',
     'host': 'mcp-test-host',
-    'description': 'Pipeline test ${TIMESTAMP}: CPU usage above 80%',
+    'description': 'Pipeline test ${TEST_UUID}: CPU usage above 80%',
     'metrics': {'cpu': 82, 'ram': 45, 'disk': 60},
-    'logs': 'test log entry ${TIMESTAMP}'
+    'logs': 'test log entry ${TEST_UUID}'
 }).encode()
 
 headers = {'Content-Type': 'application/json'}
@@ -110,28 +110,50 @@ except Exception as e:
 " 2>&1 || echo "FAIL")
 
 if echo "$analyze_result" | grep -q "queued\|deduplicated\|job_id"; then
-    check "Test alert accepted by AI Gateway" 0
+    check "Test alert accepted by AI Gateway (ID: ${TEST_UUID})" 0
+    # Job-ID aus Antwort extrahieren fuer spaetere Korrelation
+    JOB_ID=$(echo "$analyze_result" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('job_id',''))" 2>/dev/null || echo "")
+    if [ -n "$JOB_ID" ]; then
+        echo -e "    ${GREEN}Job-ID: ${JOB_ID}${NC}"
+    fi
 else
     echo "    Response: $analyze_result"
     check "Test alert accepted by AI Gateway" 1
 fi
 
-# 5. Job in Redis queue
+# 5. Job in Redis queue (Korrelation via JOB_ID und TEST_UUID)
 echo "=== Step 5: Job in Queue ==="
 sleep 2
-# Search multiple key patterns
-jobs=$(docker exec mcp-redis-queue redis-cli keys "mcp:job:*" 2>/dev/null | wc -l || echo "0")
-queue_len=$(docker exec mcp-redis-queue redis-cli llen "mcp:queue:analyze" 2>/dev/null || echo "0")
-dedup_keys=$(docker exec mcp-redis-queue redis-cli keys "mcp:dedup:*" 2>/dev/null | wc -l || echo "0")
-total_keys=$((jobs + dedup_keys))
 
-if [ "$total_keys" -gt 0 ] || [ "$queue_len" -gt 0 ]; then
-    check "Job/dedup key exists in Redis (jobs=$jobs, dedup=$dedup_keys, queue=$queue_len)" 0
+# Spezifische Suche nach unserem Job
+if [ -n "${JOB_ID:-}" ]; then
+    job_data=$(docker exec mcp-redis-queue redis-cli get "mcp:job:${JOB_ID}" 2>/dev/null || echo "")
+    if [ -n "$job_data" ]; then
+        check "Job ${JOB_ID} found in Redis" 0
+    else
+        # Job wurde moeglicherweise bereits vom Worker verarbeitet — Dedup pruefen
+        dedup_found=$(docker exec mcp-redis-queue redis-cli keys "mcp:dedup:*${TEST_UUID}*" 2>/dev/null | wc -l || echo "0")
+        if [ "$dedup_found" -gt 0 ]; then
+            check "Job already processed, dedup key found for ${TEST_UUID}" 0
+        else
+            echo "    Job-ID ${JOB_ID} nicht in Redis gefunden (moeglicherweise bereits verarbeitet)"
+            check "Job ${JOB_ID} exists in Redis" 1
+        fi
+    fi
 else
-    # Fallback: scan for any mcp-related keys
-    all_keys=$(docker exec mcp-redis-queue redis-cli keys "*" 2>/dev/null | wc -l || echo "0")
-    echo "    Total Redis keys: $all_keys"
-    check "Job exists in Redis" 1
+    # Fallback: allgemeine Suche
+    jobs=$(docker exec mcp-redis-queue redis-cli keys "mcp:job:*" 2>/dev/null | wc -l || echo "0")
+    queue_len=$(docker exec mcp-redis-queue redis-cli llen "mcp:queue:analyze" 2>/dev/null || echo "0")
+    dedup_keys=$(docker exec mcp-redis-queue redis-cli keys "mcp:dedup:*" 2>/dev/null | wc -l || echo "0")
+    total_keys=$((jobs + dedup_keys))
+
+    if [ "$total_keys" -gt 0 ] || [ "$queue_len" -gt 0 ]; then
+        check "Job/dedup key exists in Redis (jobs=$jobs, dedup=$dedup_keys, queue=$queue_len)" 0
+    else
+        all_keys=$(docker exec mcp-redis-queue redis-cli keys "*" 2>/dev/null | wc -l || echo "0")
+        echo "    Total Redis keys: $all_keys"
+        check "Job exists in Redis" 1
+    fi
 fi
 
 echo ""

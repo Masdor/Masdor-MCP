@@ -1,9 +1,10 @@
-"""MCP v7 — pgvector RAG-Service (synchron, fuer den Worker)."""
+"""MCP v7 — pgvector RAG-Service (synchron, fuer den Worker) mit Connection-Pooling."""
 
 import json
 import logging
 
 import psycopg2
+import psycopg2.pool
 from pgvector.psycopg2 import register_vector
 
 from app.config import settings
@@ -12,36 +13,67 @@ logger = logging.getLogger("mcp-langchain-worker")
 
 
 class PgvectorService:
-    """Synchroner pgvector-Client fuer RAG-Suche und Embedding-Speicherung."""
+    """Synchroner pgvector-Client mit Connection-Pool fuer RAG-Suche und Embedding-Speicherung."""
 
     def __init__(self):
-        self._conn = None
+        self._pool = None
 
     def connect(self):
-        """Verbindung zu pgvector herstellen und vector-Extension registrieren."""
+        """Connection-Pool zu pgvector herstellen und vector-Extension registrieren."""
         try:
-            self._conn = psycopg2.connect(settings.pgvector_dsn)
-            self._conn.autocommit = True
-            register_vector(self._conn)
-            logger.info("pgvector-Verbindung hergestellt")
+            self._pool = psycopg2.pool.SimpleConnectionPool(
+                minconn=1,
+                maxconn=5,
+                dsn=settings.pgvector_dsn,
+            )
+            # vector-Extension fuer jede initiale Verbindung registrieren
+            conn = self._pool.getconn()
+            conn.autocommit = True
+            register_vector(conn)
+            self._pool.putconn(conn)
+            logger.info("pgvector Connection-Pool hergestellt (min=1, max=5)")
         except Exception as e:
             logger.error("pgvector-Verbindung fehlgeschlagen: %s", e)
-            self._conn = None
+            self._pool = None
+
+    def _get_conn(self):
+        """Verbindung aus Pool holen."""
+        if not self._pool:
+            return None
+        try:
+            conn = self._pool.getconn()
+            conn.autocommit = True
+            return conn
+        except Exception as e:
+            logger.error("pgvector Pool-Verbindung fehlgeschlagen: %s", e)
+            return None
+
+    def _put_conn(self, conn):
+        """Verbindung zurueck in Pool geben."""
+        if self._pool and conn:
+            try:
+                self._pool.putconn(conn)
+            except Exception:
+                pass
 
     def close(self):
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        if self._pool:
+            self._pool.closeall()
+            self._pool = None
+            logger.info("pgvector Connection-Pool geschlossen")
 
     def health_check(self) -> bool:
-        if not self._conn:
+        conn = self._get_conn()
+        if not conn:
             return False
         try:
-            with self._conn.cursor() as cur:
+            with conn.cursor() as cur:
                 cur.execute("SELECT 1")
             return True
         except Exception:
             return False
+        finally:
+            self._put_conn(conn)
 
     def search_similar(
         self,
@@ -49,12 +81,13 @@ class PgvectorService:
         limit: int = 5,
     ) -> list[dict]:
         """Aehnliche Embeddings via Cosine-Distance suchen."""
-        if not self._conn:
+        conn = self._get_conn()
+        if not conn:
             return []
 
         try:
             embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
-            with self._conn.cursor() as cur:
+            with conn.cursor() as cur:
                 cur.execute(
                     """
                     SELECT id, content, metadata, source_type,
@@ -78,8 +111,10 @@ class PgvectorService:
                     if float(row[4]) >= settings.rag_similarity_threshold
                 ]
         except Exception as e:
-            logger.error("RAG-Suche fehlgeschlagen: %s", e)
+            logger.error("RAG-Suche fehlgeschlagen: %s", e, exc_info=True)
             return []
+        finally:
+            self._put_conn(conn)
 
     def store_embedding(
         self,
@@ -90,12 +125,13 @@ class PgvectorService:
         metadata: dict | None = None,
     ) -> int | None:
         """Embedding in pgvector speichern."""
-        if not self._conn:
+        conn = self._get_conn()
+        if not conn:
             return None
 
         try:
             embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
-            with self._conn.cursor() as cur:
+            with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO embeddings (content, embedding, source_type, source_id, metadata)
@@ -113,8 +149,10 @@ class PgvectorService:
                 row = cur.fetchone()
                 return row[0] if row else None
         except Exception as e:
-            logger.error("Embedding-Speicherung fehlgeschlagen: %s", e)
+            logger.error("Embedding-Speicherung fehlgeschlagen: %s", e, exc_info=True)
             return None
+        finally:
+            self._put_conn(conn)
 
     def log_analysis(
         self,
@@ -127,11 +165,12 @@ class PgvectorService:
         processing_time_ms: int | None = None,
     ):
         """Analyse-Ergebnis im Audit-Log speichern."""
-        if not self._conn:
+        conn = self._get_conn()
+        if not conn:
             return
 
         try:
-            with self._conn.cursor() as cur:
+            with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO analysis_log
@@ -151,6 +190,8 @@ class PgvectorService:
                 )
         except Exception as e:
             logger.error("Analyse-Log fehlgeschlagen: %s", e)
+        finally:
+            self._put_conn(conn)
 
 
 pgvector_service = PgvectorService()

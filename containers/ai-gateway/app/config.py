@@ -20,6 +20,7 @@ class Settings:
     # Redis
     redis_queue_host: str = os.getenv("REDIS_QUEUE_HOST", "redis-queue")
     redis_queue_port: int = int(os.getenv("REDIS_QUEUE_PORT", "6379"))
+    redis_pool_max: int = int(os.getenv("REDIS_POOL_MAX", "20"))
 
     # pgvector
     pgvector_host: str = os.getenv("PGVECTOR_HOST", "pgvector")
@@ -37,6 +38,18 @@ class Settings:
 
     # AI-Einstellungen
     confidence_threshold: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.75"))
+
+    # Deduplizierung
+    dedup_ttl_seconds: int = int(os.getenv("DEDUP_TTL_SECONDS", "900"))
+
+    # Validierungsgrenzen
+    max_description_length: int = int(os.getenv("MAX_DESCRIPTION_LENGTH", "4000"))
+    max_search_top_k: int = int(os.getenv("MAX_SEARCH_TOP_K", "100"))
+    max_chunk_size: int = int(os.getenv("MAX_CHUNK_SIZE", "10000"))
+    max_ingest_text_length: int = int(os.getenv("MAX_INGEST_TEXT_LENGTH", "500000"))
+
+    # Embedding-Validierung
+    expected_embedding_dimensions: int = int(os.getenv("EXPECTED_EMBEDDING_DIMENSIONS", "768"))
 
     @property
     def pgvector_dsn(self) -> str:

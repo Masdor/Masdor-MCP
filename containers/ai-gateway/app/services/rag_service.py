@@ -23,14 +23,16 @@ class RAGService:
                 settings.pgvector_dsn,
                 min_size=2,
                 max_size=10,
+                command_timeout=30,
             )
-            logger.info("pgvector Connection-Pool initialisiert")
+            logger.info("pgvector Connection-Pool initialisiert (min=2, max=10)")
         except Exception as e:
             logger.error("pgvector Pool-Initialisierung fehlgeschlagen: %s", e)
 
     async def close(self):
         if self.pool:
             await self.pool.close()
+            logger.info("pgvector Connection-Pool geschlossen")
 
     async def health_check(self) -> bool:
         if not self.pool:
@@ -50,6 +52,13 @@ class RAGService:
         """Aehnliche Embeddings via Cosine-Distance suchen."""
         if not self.pool:
             return []
+
+        # Embedding-Dimension pruefen
+        if settings.expected_embedding_dimensions and len(query_embedding) != settings.expected_embedding_dimensions:
+            logger.warning(
+                "RAG-Suche: Embedding-Dimension %d weicht von erwartet %d ab",
+                len(query_embedding), settings.expected_embedding_dimensions,
+            )
 
         try:
             embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
@@ -74,7 +83,7 @@ class RAGService:
                     for row in rows
                 ]
         except Exception as e:
-            logger.error("RAG-Suche fehlgeschlagen: %s", e)
+            logger.error("RAG-Suche fehlgeschlagen: %s", e, exc_info=True)
             return []
 
     async def store_embedding(
@@ -106,7 +115,7 @@ class RAGService:
                 )
                 return row_id
         except Exception as e:
-            logger.error("Embedding-Speicherung fehlgeschlagen: %s", e)
+            logger.error("Embedding-Speicherung fehlgeschlagen: %s", e, exc_info=True)
             return None
 
     async def delete_embedding(self, embedding_id: int) -> bool:

@@ -476,11 +476,23 @@ main() {
         case "$1" in
             --resume-from)
                 start_phase="${2//[!0-9]/}"
+                if [ -z "$start_phase" ] || [ "$start_phase" -lt 1 ] || [ "$start_phase" -gt 7 ]; then
+                    log_error "Invalid phase: '$2' — must be phase1 through phase7"
+                    echo "Usage: sudo bash scripts/mcp-install.sh --resume-from phase3"
+                    exit 1
+                fi
+                log_info "Resuming from phase ${start_phase}"
                 shift 2
                 ;;
             --only)
                 only_phase="${2//[!0-9]/}"
+                if [ -z "$only_phase" ] || [ "$only_phase" -lt 1 ] || [ "$only_phase" -gt 7 ]; then
+                    log_error "Invalid phase: '$2' — must be phase1 through phase7"
+                    echo "Usage: sudo bash scripts/mcp-install.sh --only phase6"
+                    exit 1
+                fi
                 start_phase="$only_phase"
+                log_info "Running only phase ${only_phase}"
                 shift 2
                 ;;
             --clean)

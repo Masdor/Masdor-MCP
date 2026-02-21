@@ -1,22 +1,36 @@
 """MCP v7 — Pydantic Request/Response Models fuer den AI Gateway."""
 
-from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
 # Analyze (Queue-basiert)
 # ---------------------------------------------------------------------------
 class AnalyzeRequest(BaseModel):
-    source: str = Field(..., description="Event-Quelle: zabbix, loki, crowdsec, etc.")
+    source: str = Field(..., min_length=1, max_length=50, description="Event-Quelle: zabbix, loki, crowdsec, etc.")
     severity: str = Field(default="warning", description="Schweregrad: info, warning, high, critical")
-    host: str = Field(default="unknown", description="Betroffener Host/Service")
-    description: str = Field(..., description="Event-Beschreibung")
+    host: str = Field(default="unknown", max_length=255, description="Betroffener Host/Service")
+    description: str = Field(..., min_length=1, max_length=4000, description="Event-Beschreibung")
     metrics: dict[str, Any] = Field(default_factory=dict, description="Zugehoerige Metriken")
-    logs: str = Field(default="", description="Letzte Log-Zeilen")
-    crowdsec_alerts: str = Field(default="", description="IDS-Daten von CrowdSec")
+    logs: str = Field(default="", max_length=10000, description="Letzte Log-Zeilen")
+    crowdsec_alerts: str = Field(default="", max_length=10000, description="IDS-Daten von CrowdSec")
+
+    @field_validator("severity")
+    @classmethod
+    def validate_severity(cls, v: str) -> str:
+        allowed = {"info", "warning", "high", "critical"}
+        if v not in allowed:
+            v = "warning"
+        return v
+
+    @field_validator("metrics")
+    @classmethod
+    def validate_metrics_size(cls, v: dict) -> dict:
+        if len(v) > 50:
+            raise ValueError("Maximal 50 Metriken erlaubt")
+        return v
 
 
 class AnalyzeResponse(BaseModel):
@@ -54,9 +68,9 @@ class JobListResponse(BaseModel):
 # Embed
 # ---------------------------------------------------------------------------
 class EmbedRequest(BaseModel):
-    text: str = Field(..., description="Text fuer Embedding")
-    source_type: str = Field(default="manual", description="Quelltyp: ticket, wiki, log, manual")
-    source_id: str | None = Field(default=None, description="Quell-ID")
+    text: str = Field(..., min_length=1, max_length=50000, description="Text fuer Embedding")
+    source_type: str = Field(default="manual", max_length=50, description="Quelltyp: ticket, wiki, log, manual")
+    source_id: str | None = Field(default=None, max_length=255, description="Quell-ID")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Zusaetzliche Metadaten")
 
 
@@ -90,12 +104,20 @@ class SearchResponse(BaseModel):
 # Ingest
 # ---------------------------------------------------------------------------
 class IngestRequest(BaseModel):
-    text: str = Field(..., description="Dokument-Text fuer RAG-Aufnahme")
-    source_type: str = Field(default="document", description="Quelltyp: wiki, ticket, document")
-    source_id: str | None = Field(default=None, description="Quell-ID")
+    text: str = Field(..., min_length=1, max_length=500000, description="Dokument-Text fuer RAG-Aufnahme")
+    source_type: str = Field(default="document", max_length=50, description="Quelltyp: wiki, ticket, document")
+    source_id: str | None = Field(default=None, max_length=255, description="Quell-ID")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Metadaten")
-    chunk_size: int = Field(default=512, description="Chunk-Groesse")
-    chunk_overlap: int = Field(default=50, description="Chunk-Ueberlappung")
+    chunk_size: int = Field(default=512, ge=10, le=10000, description="Chunk-Groesse")
+    chunk_overlap: int = Field(default=50, ge=0, description="Chunk-Ueberlappung")
+
+    @field_validator("chunk_overlap")
+    @classmethod
+    def validate_overlap(cls, v: int, info) -> int:
+        chunk_size = info.data.get("chunk_size", 512)
+        if v >= chunk_size:
+            raise ValueError("chunk_overlap muss kleiner als chunk_size sein")
+        return v
 
 
 class IngestResponse(BaseModel):

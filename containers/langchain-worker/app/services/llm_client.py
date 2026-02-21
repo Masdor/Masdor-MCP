@@ -27,34 +27,43 @@ class LLMClient:
         return self._call_ollama(prompt, system)
 
     def _call_litellm(self, prompt: str, system: str | None = None) -> dict | None:
-        """LLM-Aufruf ueber LiteLLM (OpenAI-kompatibles API)."""
+        """LLM-Aufruf ueber LiteLLM (OpenAI-kompatibles API) mit Retry."""
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        start = time.monotonic()
-        with httpx.Client(timeout=120.0) as client:
-            resp = client.post(
-                f"{settings.litellm_host}/chat/completions",
-                json={
-                    "model": settings.primary_model,
-                    "messages": messages,
-                    "temperature": 0.1,
-                    "max_tokens": 2048,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            elapsed_ms = int((time.monotonic() - start) * 1000)
+        for attempt in range(2):
+            try:
+                start = time.monotonic()
+                with httpx.Client(timeout=120.0) as client:
+                    resp = client.post(
+                        f"{settings.litellm_host}/chat/completions",
+                        json={
+                            "model": settings.primary_model,
+                            "messages": messages,
+                            "temperature": 0.1,
+                            "max_tokens": 2048,
+                        },
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    elapsed_ms = int((time.monotonic() - start) * 1000)
 
-            content = data["choices"][0]["message"]["content"]
-            return {
-                "response": content,
-                "model": data.get("model", settings.primary_model),
-                "latency_ms": elapsed_ms,
-                "via": "litellm",
-            }
+                    content = data["choices"][0]["message"]["content"]
+                    return {
+                        "response": content,
+                        "model": data.get("model", settings.primary_model),
+                        "latency_ms": elapsed_ms,
+                        "via": "litellm",
+                    }
+            except Exception as e:
+                if attempt == 0:
+                    logger.warning("LiteLLM Versuch 1 fehlgeschlagen: %s — Retry", e)
+                    time.sleep(2)
+                else:
+                    raise
+        return None
 
     def _call_ollama(self, prompt: str, system: str | None = None) -> dict:
         """Direkter LLM-Aufruf an Ollama (Fallback)."""
@@ -97,20 +106,26 @@ class LLMClient:
         return {"response": "", "model": settings.primary_model, "latency_ms": 0, "via": "error"}
 
     def embed(self, text: str) -> list[float]:
-        """Embedding-Vektor generieren via Ollama."""
-        try:
-            with httpx.Client(timeout=30.0) as client:
-                resp = client.post(
-                    f"{settings.ollama_host}/api/embed",
-                    json={"model": settings.embedding_model, "input": text},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                embeddings = data.get("embeddings", [[]])
-                return embeddings[0] if embeddings else []
-        except Exception as e:
-            logger.error("Embedding fehlgeschlagen: %s", e)
-            return []
+        """Embedding-Vektor generieren via Ollama mit Retry."""
+        for attempt in range(3):
+            try:
+                with httpx.Client(timeout=30.0) as client:
+                    resp = client.post(
+                        f"{settings.ollama_host}/api/embed",
+                        json={"model": settings.embedding_model, "input": text},
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    embeddings = data.get("embeddings", [[]])
+                    return embeddings[0] if embeddings else []
+            except Exception as e:
+                wait = 2 ** (attempt + 1)
+                logger.warning("Embedding Versuch %d fehlgeschlagen: %s", attempt + 1, e)
+                if attempt == 2:
+                    logger.error("Embedding endgueltig fehlgeschlagen nach 3 Versuchen")
+                    return []
+                time.sleep(wait)
+        return []
 
 
 llm_client = LLMClient()
