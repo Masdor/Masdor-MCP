@@ -229,9 +229,9 @@ phase2_environment() {
 
     # Create ALL volumes upfront for ALL phases (P2-001)
     local volumes=(
-        # Core Stack
+        # Core Stack (NOTE: kein mcp-keycloak-data — Keycloak speichert in PostgreSQL)
         "mcp-postgres-data" "mcp-pgvector-data" "mcp-redis-data"
-        "mcp-keycloak-data" "mcp-n8n-data" "mcp-ntfy-cache" "mcp-nginx-logs"
+        "mcp-n8n-data" "mcp-ntfy-cache" "mcp-nginx-logs"
         # Ops Stack
         "mcp-elasticsearch-data" "mcp-zammad-data" "mcp-zammad-tmp"
         "mcp-bookstack-data" "mcp-vaultwarden-data" "mcp-portainer-data"
@@ -252,7 +252,7 @@ phase2_environment() {
         fi
     done
 
-    log_ok "All 22 Docker volumes created"
+    log_ok "All 21 Docker volumes created"
 
     # Create logs directory
     mkdir -p "${PROJECT_DIR}/logs"

@@ -116,6 +116,10 @@ services:
       GF_RENDERING_CALLBACK_URL: http://grafana:3000/
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_INSTALL_PLUGINS: alexanderzobnin-zabbix-datasource
+      # Env vars fuer Datasource-Provisioning (Grafana expandiert diese in YAML-Dateien)
+      GRAFANA_DB_USER: ${GRAFANA_DB_USER}
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD}
     volumes:
       - mcp-grafana-data:/var/lib/grafana
       - ../../config/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro

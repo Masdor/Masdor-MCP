@@ -28,7 +28,12 @@ if [ -f .env ]; then
 fi
 export COMPOSE_IGNORE_ORPHANS=1
 
-ENV_FILE="--env-file .env"
+# ENV_FILE nur setzen wenn .env existiert (sonst scheitert docker compose leise)
+if [ -f .env ]; then
+    ENV_FILE="--env-file .env"
+else
+    ENV_FILE=""
+fi
 
 echo ""
 echo "============================================"
