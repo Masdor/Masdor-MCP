@@ -1,7 +1,7 @@
 # ============================================================================
-# MCP v7 — Remote Stack (3 Containers: #25-#27)
+# MCP v7 — Remote Stack (3 Containers + 2 Init: #25-#27)
 # ============================================================================
-# MeshCentral, Guacamole, Guacd
+# Guacamole Init (Schema-SQL generieren + anwenden), MeshCentral, Guacamole, Guacd
 # ============================================================================
 
 # Shared logging config (YAML anchor)
@@ -12,6 +12,59 @@ x-logging: &default-logging
     max-file: "3"
 
 services:
+
+  # --------------------------------------------------------------------------
+  # Guacamole DB Init (one-shot — generiert Schema-SQL aus Guacamole-Image)
+  # --------------------------------------------------------------------------
+  guacamole-init:
+    image: guacamole/guacamole:${GUACAMOLE_TAG:-1.5.5}
+    container_name: mcp-guacamole-init
+    restart: "no"
+    networks:
+      - mcp-data-net
+    volumes:
+      - mcp-guacamole-initdb:/initdb
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "Generiere Guacamole DB-Schema..."
+        /opt/guacamole/bin/initdb.sh --postgresql > /initdb/initdb.sql
+        echo "Schema SQL generiert ($$(wc -l < /initdb/initdb.sql) Zeilen)"
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+
+  # --------------------------------------------------------------------------
+  # Guacamole Schema Apply (one-shot — wendet SQL auf PostgreSQL an)
+  # --------------------------------------------------------------------------
+  guacamole-schema:
+    image: postgres:${POSTGRES_TAG:-16-alpine}
+    container_name: mcp-guacamole-schema
+    restart: "no"
+    networks:
+      - mcp-data-net
+    environment:
+      PGPASSWORD: ${GUACAMOLE_DB_PASSWORD}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Warte auf PostgreSQL..."
+        until pg_isready -h postgres -p 5432 -U ${GUACAMOLE_DB_USER:-guacamole}; do sleep 2; done
+        if psql -h postgres -U ${GUACAMOLE_DB_USER:-guacamole} -d ${GUACAMOLE_DB_NAME:-guacamole} -c "SELECT 1 FROM guacamole_user LIMIT 1" >/dev/null 2>&1; then
+          echo "Guacamole-Schema existiert bereits — ueberspringe"
+        else
+          echo "Wende Guacamole-Schema an..."
+          psql -h postgres -U ${GUACAMOLE_DB_USER:-guacamole} -d ${GUACAMOLE_DB_NAME:-guacamole} -f /initdb/initdb.sql
+          echo "Guacamole DB-Schema erfolgreich initialisiert"
+        fi
+    volumes:
+      - mcp-guacamole-initdb:/initdb:ro
+    depends_on:
+      guacamole-init:
+        condition: service_completed_successfully
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
 
   # --------------------------------------------------------------------------
   # #25 — MeshCentral (Remote Desktop & Management)
@@ -73,6 +126,8 @@ services:
     depends_on:
       guacd:
         condition: service_healthy
+      guacamole-schema:
+        condition: service_completed_successfully
     deploy:
       resources:
         limits:
@@ -126,4 +181,6 @@ volumes:
   mcp-meshcentral-data:
     external: true
   mcp-guacamole-data:
+    external: true
+  mcp-guacamole-initdb:
     external: true

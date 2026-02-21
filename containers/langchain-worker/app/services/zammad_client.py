@@ -17,11 +17,18 @@ class ZammadClient:
         self._client = httpx.Client(
             base_url=settings.zammad_url,
             timeout=15.0,
-            headers={
-                "Authorization": f"Token token={settings.zammad_token}",
-                "Content-Type": "application/json",
-            },
         )
+
+    def close(self):
+        """HTTP-Client schliessen."""
+        self._client.close()
+
+    def _get_headers(self) -> dict:
+        """Auth-Headers lazy erstellen (Token kann sich zur Laufzeit aendern)."""
+        return {
+            "Authorization": f"Token token={settings.zammad_token}",
+            "Content-Type": "application/json",
+        }
 
     def create_ticket(
         self,
@@ -40,6 +47,7 @@ class ZammadClient:
             try:
                 resp = self._client.post(
                     "/api/v1/tickets",
+                    headers=self._get_headers(),
                     json={
                         "title": title,
                         "group": group,

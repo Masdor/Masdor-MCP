@@ -114,6 +114,12 @@ class LLMClient:
                 time.sleep(wait)
         return {"response": "", "model": settings.primary_model, "latency_ms": 0, "via": "error"}
 
+    def close(self):
+        """Alle HTTP-Clients schliessen."""
+        self._litellm_client.close()
+        self._ollama_client.close()
+        self._embed_client.close()
+
     def embed(self, text: str) -> list[float]:
         """Embedding-Vektor generieren via Ollama mit Retry."""
         for attempt in range(3):
