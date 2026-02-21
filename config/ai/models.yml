@@ -7,7 +7,7 @@
 # ============================================================================
 
 model_list:
-  - model_name: mistral
+  - model_name: mistral:7b-instruct-v0.3-q4_K_M
     litellm_params:
       model: ollama/mistral:7b-instruct-v0.3-q4_K_M
       api_base: http://ollama:11434

@@ -25,7 +25,7 @@ AUFGABE:
 6. Konfidenz (High/Medium/Low) mit Begruendung
 
 FORMAT: JSON
-{
+{{
   "root_cause": "",
   "impact": "Gering|Mittel|Hoch|Kritisch",
   "affected_services": [],
@@ -35,4 +35,4 @@ FORMAT: JSON
   "confidence_reason": "",
   "ticket_title": "",
   "ticket_priority": "1_low|2_normal|3_high|4_urgent"
-}
+}}
