@@ -33,6 +33,10 @@ class NtfyClient:
             timeout=10.0,
         )
 
+    def close(self):
+        """HTTP-Client schliessen."""
+        self._client.close()
+
     def send_notification(
         self,
         title: str,

@@ -331,6 +331,9 @@ def main():
 
     # Aufraumen
     pgvector_service.close()
+    llm_client.close()
+    ntfy_client.close()
+    zammad_client.close()
     logger.info("Worker ordnungsgemaess beendet")
 
 

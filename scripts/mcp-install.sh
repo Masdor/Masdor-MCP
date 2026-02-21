@@ -238,7 +238,7 @@ phase2_environment() {
         # Telemetry Stack
         "mcp-grafana-data" "mcp-loki-data" "mcp-uptime-kuma-data" "mcp-crowdsec-data"
         # Remote Stack
-        "mcp-meshcentral-data" "mcp-guacamole-data"
+        "mcp-meshcentral-data" "mcp-guacamole-data" "mcp-guacamole-initdb"
         # AI Stack
         "mcp-ollama-data" "mcp-redis-queue-data"
     )
@@ -423,11 +423,31 @@ phase6_ai() {
 # Phase 7: Remote Stack (#25-#27)
 # ---------------------------------------------------------------------------
 phase7_remote() {
-    log_info "Phase 7: Remote Stack (3 containers)"
+    log_info "Phase 7: Remote Stack (3 containers + 2 init)"
     echo "----------------------------------------"
 
     cd "$PROJECT_DIR"
     docker compose -p "${COMPOSE_PROJECT_NAME:-mcp}" --env-file .env -f compose/remote/docker-compose.yml up -d
+
+    log_info "Waiting for Guacamole DB schema init..."
+    local schema_timeout=60
+    local schema_elapsed=0
+    while [ "$schema_elapsed" -lt "$schema_timeout" ]; do
+        local schema_status
+        schema_status=$(docker inspect --format='{{.State.Status}}' mcp-guacamole-schema 2>/dev/null || echo "unknown")
+        if [ "$schema_status" = "exited" ]; then
+            local exit_code
+            exit_code=$(docker inspect --format='{{.State.ExitCode}}' mcp-guacamole-schema 2>/dev/null || echo "1")
+            if [ "$exit_code" = "0" ]; then
+                log_ok "Guacamole DB-Schema erfolgreich initialisiert"
+            else
+                log_warn "Guacamole Schema-Init mit Exit-Code $exit_code beendet"
+            fi
+            break
+        fi
+        sleep 2
+        schema_elapsed=$((schema_elapsed + 2))
+    done
 
     log_info "Waiting for Remote containers..."
 

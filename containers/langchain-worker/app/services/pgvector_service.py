@@ -19,18 +19,13 @@ class PgvectorService:
         self._pool = None
 
     def connect(self):
-        """Connection-Pool zu pgvector herstellen und vector-Extension registrieren."""
+        """Connection-Pool zu pgvector herstellen."""
         try:
             self._pool = psycopg2.pool.SimpleConnectionPool(
                 minconn=1,
                 maxconn=5,
                 dsn=settings.pgvector_dsn,
             )
-            # vector-Extension fuer jede initiale Verbindung registrieren
-            conn = self._pool.getconn()
-            conn.autocommit = True
-            register_vector(conn)
-            self._pool.putconn(conn)
             logger.info("pgvector Connection-Pool hergestellt (min=1, max=5)")
         except Exception as e:
             logger.error("pgvector-Verbindung fehlgeschlagen: %s", e)
