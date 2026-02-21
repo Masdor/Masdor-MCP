@@ -114,7 +114,7 @@ services:
       REDIS_QUEUE_PORT: 6379
       REDIS_QUEUE_PASSWORD: ${REDIS_QUEUE_PASSWORD:-changeme}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
-      PRIMARY_MODEL: ${OLLAMA_MODEL:-mistral:7b}
+      PRIMARY_MODEL: ${OLLAMA_MODEL:-mistral:7b-instruct-v0.3-q4_K_M}
       ZAMMAD_URL: http://zammad-rails:3000
       ZAMMAD_TOKEN: ${ZAMMAD_AI_TOKEN}
       NTFY_URL: http://ntfy:80

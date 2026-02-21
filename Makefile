@@ -77,7 +77,7 @@ down-ai: ## Stop AI stack
 # === STATUS & LOGS ==========================================================
 
 .PHONY: status
-status: ## Show status of all 32 containers
+status: ## Show status of all containers
 	@bash scripts/mcp-status.sh
 
 .PHONY: ps
@@ -148,7 +148,7 @@ restore: ## Restore from backup (interactive)
 # === INSTALLATION ===========================================================
 
 .PHONY: install
-install: ## Run full installation (6 phases with gate checks)
+install: ## Run full installation (7 phases with gate checks)
 	@sudo bash scripts/mcp-install.sh
 
 .PHONY: pull-images

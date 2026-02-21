@@ -8,6 +8,12 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+if [ -f "${PROJECT_DIR}/.env" ]; then
+    set -a; source "${PROJECT_DIR}/.env"; set +a
+fi
+
 BACKUP_DIR="${1:-/tmp/mcp-backups}"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 BACKUP_PATH="${BACKUP_DIR}/mcp-backup-${TIMESTAMP}"
@@ -100,6 +106,7 @@ VOLUMES=(
     mcp-crowdsec-data
     mcp-meshcentral-data
     mcp-guacamole-data
+    mcp-guacamole-initdb
     mcp-ollama-data
     mcp-redis-queue-data
     mcp-keycloak-data
