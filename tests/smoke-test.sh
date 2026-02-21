@@ -101,7 +101,7 @@ check "#12 Elasticsearch"    "mcp-elasticsearch"    healthy
 check "   BookStack DB"      "mcp-bookstack-db"     healthy
 check "#13 BookStack"        "mcp-bookstack"        healthy
 check "#14 Vaultwarden"      "mcp-vaultwarden"      healthy
-check "#15 Portainer"        "mcp-portainer"        running
+check "#15 Portainer"        "mcp-portainer"        healthy
 check "#16 DIUN"             "mcp-diun"             running
 echo ""
 
