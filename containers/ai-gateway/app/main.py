@@ -18,8 +18,9 @@ Endpoints:
 import json
 import logging
 import time
+import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -65,20 +66,36 @@ QUEUE_LENGTH = Gauge("mcp_queue_length", "Aktuelle Queue-Laenge")
 
 _start_time = time.time()
 
-# Redis-Verbindung (lazy init)
-_redis_client: redis.Redis | None = None
+# Redis Connection Pool (statt einzelner Verbindung)
+_redis_pool: redis.ConnectionPool | None = None
 
 
 def get_redis() -> redis.Redis:
-    """Redis-Verbindung herstellen/wiederverwenden."""
-    global _redis_client
-    if _redis_client is None:
-        _redis_client = redis.Redis(
+    """Redis-Verbindung aus Connection-Pool herstellen."""
+    global _redis_pool
+    if _redis_pool is None:
+        _redis_pool = redis.ConnectionPool(
             host=settings.redis_queue_host,
             port=settings.redis_queue_port,
             decode_responses=True,
+            max_connections=settings.redis_pool_max,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            retry_on_timeout=True,
         )
-    return _redis_client
+    return redis.Redis(connection_pool=_redis_pool)
+
+
+# Wiederverwendbarer HTTP-Client fuer Health-Checks
+_http_client: httpx.AsyncClient | None = None
+
+
+async def get_http_client() -> httpx.AsyncClient:
+    """Wiederverwendbaren HTTP-Client fuer Health-Checks bereitstellen."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=5.0)
+    return _http_client
 
 
 # ---------------------------------------------------------------------------
@@ -91,8 +108,14 @@ async def lifespan(app: FastAPI):
     await rag_service.init_pool()
     yield
     logger.info("MCP AI Gateway faehrt herunter...")
+    # Graceful Shutdown: Alle Verbindungen schliessen
     await ollama_client.close()
     await rag_service.close()
+    if _http_client and not _http_client.is_closed:
+        await _http_client.aclose()
+    if _redis_pool:
+        _redis_pool.disconnect()
+    logger.info("Alle Verbindungen geschlossen")
 
 
 app = FastAPI(
@@ -123,12 +146,18 @@ def verify_token(authorization: Optional[str]) -> None:
 @app.get("/health", response_model=HealthResponse)
 async def health():
     """Health-Check aller Abhaengigkeiten."""
+    client = await get_http_client()
+
     # Redis
     redis_status = "error"
     try:
         r = get_redis()
         if r.ping():
             redis_status = "ok"
+    except redis.ConnectionError as e:
+        logger.warning("Health: Redis Verbindungsfehler: %s", e)
+    except redis.TimeoutError as e:
+        logger.warning("Health: Redis Timeout: %s", e)
     except Exception as e:
         logger.warning("Health: Redis nicht erreichbar: %s", e)
 
@@ -138,11 +167,10 @@ async def health():
     # LiteLLM
     litellm_status = "error"
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{settings.litellm_host}/health/liveliness")
-            litellm_status = "ok" if resp.status_code == 200 else "error"
-    except Exception:
-        pass
+        resp = await client.get(f"{settings.litellm_host}/health/liveliness")
+        litellm_status = "ok" if resp.status_code == 200 else "error"
+    except Exception as e:
+        logger.warning("Health: LiteLLM nicht erreichbar: %s", e)
 
     # pgvector
     pgvector_status = "ok" if await rag_service.health_check() else "error"
@@ -150,20 +178,18 @@ async def health():
     # Zammad
     zammad_status = "error"
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{settings.zammad_url}/")
-            zammad_status = "ok" if resp.status_code in (200, 301, 302) else "error"
-    except Exception:
-        pass
+        resp = await client.get(f"{settings.zammad_url}/")
+        zammad_status = "ok" if resp.status_code in (200, 301, 302) else "error"
+    except Exception as e:
+        logger.warning("Health: Zammad nicht erreichbar: %s", e)
 
     # ntfy
     ntfy_status = "error"
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{settings.ntfy_url}/v1/health")
-            ntfy_status = "ok" if resp.status_code == 200 else "error"
-    except Exception:
-        pass
+        resp = await client.get(f"{settings.ntfy_url}/v1/health")
+        ntfy_status = "ok" if resp.status_code == 200 else "error"
+    except Exception as e:
+        logger.warning("Health: ntfy nicht erreichbar: %s", e)
 
     statuses = [redis_status, ollama_status, pgvector_status]
     overall = "healthy" if all(s == "ok" for s in statuses) else "degraded"
@@ -213,7 +239,7 @@ async def analyze(
 
     r = get_redis()
 
-    # Deduplizierung
+    # Deduplizierung (TTL aus Settings)
     dedup_key = f"mcp:dedup:{request.source}:{request.host}:{request.description[:50]}"
     if r.exists(dedup_key):
         return AnalyzeResponse(
@@ -222,13 +248,13 @@ async def analyze(
             message="Duplikat — bereits in den letzten 15 Minuten verarbeitet",
         )
 
-    r.setex(dedup_key, 900, "1")
+    r.setex(dedup_key, settings.dedup_ttl_seconds, "1")
 
-    # Job erstellen
-    job_id = f"job_{int(time.time())}_{request.source}"
+    # Job erstellen (UUID statt Timestamp fuer Eindeutigkeit)
+    job_id = f"job_{uuid.uuid4().hex[:12]}_{request.source}"
     job_data = {
         "id": job_id,
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "status": "pending",
         "source": request.source,
         "severity": request.severity,
@@ -266,6 +292,13 @@ async def embed(
         if not embedding:
             raise HTTPException(status_code=503, detail="Embedding-Service nicht verfuegbar")
 
+        # Embedding-Dimension validieren
+        if settings.expected_embedding_dimensions and len(embedding) != settings.expected_embedding_dimensions:
+            logger.warning(
+                "Unerwartete Embedding-Dimension: %d (erwartet: %d)",
+                len(embedding), settings.expected_embedding_dimensions,
+            )
+
         embedding_id = await rag_service.store_embedding(
             content=request.text,
             embedding=embedding,
@@ -288,6 +321,7 @@ async def embed(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error("Embedding fehlgeschlagen: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Embedding fehlgeschlagen: {str(e)}")
 
 
@@ -304,6 +338,12 @@ async def search(
     verify_token(authorization)
     REQUESTS_TOTAL.labels(endpoint="search").inc()
     RAG_SEARCHES.inc()
+
+    # Input-Validierung
+    top_k = max(1, min(top_k, settings.max_search_top_k))
+
+    if not query or len(query.strip()) == 0:
+        raise HTTPException(status_code=422, detail="Query darf nicht leer sein")
 
     try:
         query_embedding = await ollama_client.embed(query)
@@ -330,6 +370,7 @@ async def search(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error("Suche fehlgeschlagen: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Suche fehlgeschlagen: {str(e)}")
 
 
@@ -406,6 +447,10 @@ async def list_jobs(
     """Alle Analyse-Jobs auflisten."""
     verify_token(authorization)
     REQUESTS_TOTAL.labels(endpoint="jobs").inc()
+
+    # Input-Validierung
+    offset = max(0, offset)
+    limit = max(1, min(limit, 100))
 
     r = get_redis()
     jobs = []

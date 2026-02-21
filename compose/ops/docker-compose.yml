@@ -5,6 +5,13 @@
 # BookStack + MariaDB, Vaultwarden, Portainer, DIUN
 # ============================================================================
 
+# Shared logging config (YAML anchor)
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
 
   # --------------------------------------------------------------------------
@@ -34,6 +41,12 @@ services:
       - mcp-zammad-data:/opt/zammad/storage
       - mcp-zammad-tmp:/opt/zammad/tmp
     restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+    logging: *default-logging
 
   # --------------------------------------------------------------------------
   # #9 — Zammad Rails (Web UI)
@@ -75,6 +88,12 @@ services:
         condition: service_completed_successfully
       elasticsearch:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -103,9 +122,21 @@ services:
     volumes:
       - mcp-zammad-data:/opt/zammad/storage
       - mcp-zammad-tmp:/opt/zammad/tmp
+    healthcheck:
+      test: ["CMD-SHELL", "echo > /dev/tcp/127.0.0.1/6042"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     depends_on:
       zammad-init:
         condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -135,9 +166,21 @@ services:
     volumes:
       - mcp-zammad-data:/opt/zammad/storage
       - mcp-zammad-tmp:/opt/zammad/tmp
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f scheduler || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     depends_on:
       zammad-init:
         condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -155,7 +198,7 @@ services:
     environment:
       discovery.type: single-node
       xpack.security.enabled: "false"
-      ES_JAVA_OPTS: "${ES_JAVA_OPTS}"
+      ES_JAVA_OPTS: "${ES_JAVA_OPTS:--Xms512m -Xmx1g}"
     volumes:
       - mcp-elasticsearch-data:/usr/share/elasticsearch/data
     healthcheck:
@@ -164,6 +207,12 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -180,6 +229,17 @@ services:
     expose:
       - "11211"
     command: memcached -m 64
+    healthcheck:
+      test: ["CMD-SHELL", "echo stats | nc 127.0.0.1 11211 | grep -q pid"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -207,6 +267,12 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -242,6 +308,12 @@ services:
     depends_on:
       bookstack-db:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -269,6 +341,12 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -289,6 +367,12 @@ services:
       - mcp-portainer-data:/data
     healthcheck:
       test: ["NONE"]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -308,6 +392,12 @@ services:
       DIUN_PROVIDERS_DOCKER_WATCHBYDEFAULT: "true"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 

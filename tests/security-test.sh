@@ -85,6 +85,54 @@ for c in $(docker ps --filter "label=com.docker.compose.project=${PROJECT}" --fo
 done
 check "Containers with no-new-privileges: $containers_with_nnp/$total_containers" "$([ "$containers_with_nnp" -gt 0 ] && echo 0 || echo 1)"
 
+# 6. Check .env file permissions (should not be world-readable)
+echo "=== Secret File Permissions ==="
+if [ -f .env ]; then
+    env_perms=$(stat -c '%a' .env 2>/dev/null || echo "unknown")
+    # Sicherstellen, dass .env nicht world-readable ist (nicht x00 am Ende)
+    if [ "$env_perms" != "unknown" ]; then
+        world_read=$((env_perms % 10))
+        if [ "$world_read" -ge 4 ]; then
+            echo -e "    .env permissions: $env_perms (world-readable!)"
+            check ".env is not world-readable" 1
+        else
+            check ".env is not world-readable (perms: $env_perms)" 0
+        fi
+    else
+        echo -e "    ${YELLOW}Could not determine .env permissions${NC}"
+        check ".env permissions check" 0
+    fi
+else
+    echo -e "    ${YELLOW}No .env file found (skipped)${NC}"
+fi
+
+# 7. Check container capabilities — kein Container sollte mehr als 15 Capabilities haben
+echo "=== Container Capabilities ==="
+cap_violations=0
+for c in $(docker ps --filter "label=com.docker.compose.project=${PROJECT}" --format "{{.Names}}"); do
+    cap_add=$(docker inspect --format='{{.HostConfig.CapAdd}}' "$c" 2>/dev/null || echo "[]")
+    # Zaehle hinzugefuegte Capabilities
+    if [ "$cap_add" != "[]" ] && [ "$cap_add" != "<nil>" ] && [ -n "$cap_add" ]; then
+        num_caps=$(echo "$cap_add" | tr ',' '\n' | wc -l)
+        if [ "$num_caps" -gt 5 ]; then
+            echo -e "    ${YELLOW}${c}: ${num_caps} added capabilities${NC}"
+            cap_violations=$((cap_violations + 1))
+        fi
+    fi
+done
+check "No container has excessive capabilities (violations: $cap_violations)" "$([ "$cap_violations" -eq 0 ] && echo 0 || echo 1)"
+
+# 8. Pruefen, dass alle Container cap_drop: ALL haben
+echo "=== Cap Drop Check ==="
+containers_with_cap_drop=0
+for c in $(docker ps --filter "label=com.docker.compose.project=${PROJECT}" --format "{{.Names}}"); do
+    cap_drop=$(docker inspect --format='{{.HostConfig.CapDrop}}' "$c" 2>/dev/null || echo "[]")
+    if echo "$cap_drop" | grep -qi "all"; then
+        containers_with_cap_drop=$((containers_with_cap_drop + 1))
+    fi
+done
+check "Containers with cap_drop ALL: $containers_with_cap_drop/$total_containers" "$([ "$containers_with_cap_drop" -gt 0 ] && echo 0 || echo 1)"
+
 echo ""
 echo "============================================"
 echo -e "  PASS: ${GREEN}${PASS}${NC}  |  FAIL: ${RED}${FAIL}${NC}"

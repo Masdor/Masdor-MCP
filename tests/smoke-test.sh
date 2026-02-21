@@ -61,11 +61,15 @@ check() {
             ;;
     esac
 
-    # Check restart count
+    # Check restart count — mehr als 3 Restarts gelten als Fehler
     local restarts
     restarts=$(docker inspect --format='{{.RestartCount}}' "$container" 2>/dev/null || echo "0")
-    if [ "$restarts" -gt 0 ]; then
+    if [ "$restarts" -gt 3 ]; then
+        echo -e "    ${RED}FAIL: $restarts restart(s) (max 3)${NC}"
+        FAIL=$((FAIL + 1))
+    elif [ "$restarts" -gt 0 ]; then
         echo -e "    ${YELLOW}WARNING: $restarts restart(s)${NC}"
+        WARN=$((WARN + 1))
     fi
 }
 
@@ -90,8 +94,8 @@ echo ""
 echo "=== Ops Stack ==="
 check "   Zammad Init"       "mcp-zammad-init"      exited_ok
 check "#9 Zammad Rails"      "mcp-zammad-rails"     healthy
-check "#10 Zammad WS"        "mcp-zammad-websocket" running
-check "#11 Zammad Scheduler"  "mcp-zammad-scheduler" running
+check "#10 Zammad WS"        "mcp-zammad-websocket" healthy
+check "#11 Zammad Scheduler"  "mcp-zammad-scheduler" healthy
 check "#12 Elasticsearch"    "mcp-elasticsearch"    healthy
 check "#13 BookStack"        "mcp-bookstack"        healthy
 check "#14 Vaultwarden"      "mcp-vaultwarden"      healthy
@@ -104,22 +108,22 @@ check "#17 Zabbix Server"    "mcp-zabbix-server"    healthy
 check "#18 Zabbix Web"       "mcp-zabbix-web"       healthy
 check "#19 Grafana"          "mcp-grafana"          healthy
 check "#20 Loki"             "mcp-loki"             healthy
-check "#21 Alloy"            "mcp-alloy"            running
+check "#21 Alloy"            "mcp-alloy"            healthy
 check "#22 Uptime Kuma"      "mcp-uptime-kuma"      healthy
-check "#23 CrowdSec"         "mcp-crowdsec"         running
+check "#23 CrowdSec"         "mcp-crowdsec"         healthy
 check "#24 Grafana Renderer" "mcp-grafana-renderer" running
 echo ""
 
 echo "=== Remote Stack ==="
 check "#25 MeshCentral"  "mcp-meshcentral" healthy
 check "#26 Guacamole"    "mcp-guacamole"   healthy
-check "#27 Guacd"        "mcp-guacd"       running
+check "#27 Guacd"        "mcp-guacd"       healthy
 echo ""
 
 echo "=== AI Stack ==="
 check "#28 Ollama"       "mcp-ollama"      healthy
 check "#29 LiteLLM"      "mcp-litellm"     healthy
-check "#30 LangChain"    "mcp-langchain"   running
+check "#30 LangChain"    "mcp-langchain"   healthy
 check "#31 AI Gateway"   "mcp-ai-gateway"  healthy
 check "#32 Redis Queue"  "mcp-redis-queue" healthy
 echo ""
@@ -136,6 +140,42 @@ for path in $DASHBOARD_PATHS; do
         PASS=$((PASS + 1))
     fi
 done
+echo ""
+
+echo "=== Internal Service HTTP Checks ==="
+# AI Gateway health (via docker exec — nicht oeffentlich)
+ai_health=$(docker exec mcp-ai-gateway python -c "
+import urllib.request, sys
+try:
+    r = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)
+    print(r.getcode())
+except Exception:
+    print('000')
+" 2>/dev/null || echo "000")
+if [ "$ai_health" = "200" ]; then
+    echo -e "  ${GREEN}[PASS]${NC} AI Gateway /health — HTTP ${ai_health}"
+    PASS=$((PASS + 1))
+else
+    echo -e "  ${RED}[FAIL]${NC} AI Gateway /health — HTTP ${ai_health}"
+    FAIL=$((FAIL + 1))
+fi
+
+# LiteLLM health
+litellm_health=$(docker exec mcp-litellm python -c "
+import urllib.request, sys
+try:
+    r = urllib.request.urlopen('http://127.0.0.1:4000/health', timeout=5)
+    print(r.getcode())
+except Exception:
+    print('000')
+" 2>/dev/null || echo "000")
+if [ "$litellm_health" = "200" ]; then
+    echo -e "  ${GREEN}[PASS]${NC} LiteLLM /health — HTTP ${litellm_health}"
+    PASS=$((PASS + 1))
+else
+    echo -e "  ${YELLOW}[WARN]${NC} LiteLLM /health — HTTP ${litellm_health}"
+    WARN=$((WARN + 1))
+fi
 echo ""
 
 echo "============================================"

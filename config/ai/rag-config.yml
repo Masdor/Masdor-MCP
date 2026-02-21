@@ -1,6 +1,11 @@
 # ============================================================================
 # MCP v7 — RAG Pipeline Configuration
 # ============================================================================
+# Schema-Version: Aenderungen an der Konfigurationsstruktur erfordern
+# eine Aktualisierung der Version.
+# ============================================================================
+
+config_version: "1.0"
 
 rag:
   vector_db: pgvector

@@ -5,6 +5,13 @@
 # CrowdSec, Grafana Renderer
 # ============================================================================
 
+# Shared logging config (YAML anchor)
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
 
   # --------------------------------------------------------------------------
@@ -33,6 +40,12 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -66,7 +79,13 @@ services:
       start_period: 60s
     depends_on:
       zabbix-server:
-        condition: service_started
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -108,6 +127,12 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -133,6 +158,12 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -156,9 +187,21 @@ services:
       - ../../config/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/log:/var/log:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:12345/-/ready 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     depends_on:
       loki:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -181,6 +224,12 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -204,6 +253,18 @@ services:
       - ../../config/crowdsec/acquis.yml:/etc/crowdsec/acquis.yaml:ro
       - /var/log:/var/log:ro
       - mcp-crowdsec-data:/var/lib/crowdsec/data
+    healthcheck:
+      test: ["CMD-SHELL", "cscli version > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 
@@ -220,6 +281,12 @@ services:
       - "8081"
     environment:
       ENABLE_METRICS: "true"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
 

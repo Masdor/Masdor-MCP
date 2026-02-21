@@ -53,6 +53,9 @@ def get_redis() -> redis.Redis:
         host=settings.redis_queue_host,
         port=settings.redis_queue_port,
         decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=10,
+        retry_on_timeout=True,
     )
 
 
@@ -82,15 +85,18 @@ def parse_llm_response(response_text: str) -> dict:
         }
 
 
+# Prioritaet-Mapping (konfigurierbar)
+PRIORITY_MAPPING = {
+    "4_urgent": 1,
+    "3_high": 2,
+    "2_normal": 3,
+    "1_low": 4,
+}
+
+
 def map_priority(priority_str: str) -> int:
     """Ticket-Priority-String auf Zammad priority_id mappen."""
-    mapping = {
-        "4_urgent": 1,
-        "3_high": 2,
-        "2_normal": 3,
-        "1_low": 4,
-    }
-    return mapping.get(priority_str, 3)
+    return PRIORITY_MAPPING.get(priority_str, 3)
 
 
 def should_create_ticket(analysis: dict, severity: str) -> bool:
@@ -148,10 +154,10 @@ def process_job(r: redis.Redis, job_id: str) -> None:
         via = llm_result.get("via", "unknown")
         logger.info("LLM-Antwort erhalten via %s (%s)", via, model_used)
     except Exception as e:
-        logger.error("LLM-Analyse fehlgeschlagen: %s", e)
+        logger.error("LLM-Analyse fehlgeschlagen: %s", e, exc_info=True)
         r.hset(f"mcp:job:{job_id}", mapping={
             "status": "failed",
-            "error": str(e),
+            "error": str(e)[:500],
             "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         })
         return
@@ -200,7 +206,7 @@ def process_job(r: redis.Redis, job_id: str) -> None:
 
     ntfy_client.send_notification(
         title=ntfy_title,
-        message=ntfy_message,
+        message=ntfy_message[:settings.ntfy_max_message_length],
         severity=impact,
         tags=["warning", job_data.get("source", "mcp")],
     )
@@ -220,7 +226,6 @@ def process_job(r: redis.Redis, job_id: str) -> None:
     # 9. Analyse-Ergebnis in pgvector speichern (fuer zukuenftige RAG-Suche)
     try:
         if pgvector_service.health_check():
-            # Analyse als Text zusammenfassen fuer Embedding
             summary = (
                 f"Alert von {job_data.get('source', 'unknown')} auf {job_data.get('host', 'unknown')}: "
                 f"{job_data.get('description', '')} — "
@@ -244,7 +249,6 @@ def process_job(r: redis.Redis, job_id: str) -> None:
                     },
                 )
 
-            # Analyse im Audit-Log speichern
             confidence_score = {"High": 0.9, "Medium": 0.6, "Low": 0.3}.get(
                 analysis.get("confidence", "Low"), 0.3
             )
@@ -277,16 +281,16 @@ def main():
     logger.info("LiteLLM: %s (Fallback: %s)", settings.litellm_host, settings.ollama_host)
     logger.info("pgvector: %s:%s", settings.pgvector_host, settings.pgvector_port)
 
-    # Redis-Verbindung herstellen
+    # Redis-Verbindung herstellen (mit konfigurierbarem Retry)
     r = None
-    for attempt in range(30):
+    for attempt in range(settings.redis_max_connect_retries):
         try:
             r = get_redis()
             r.ping()
             logger.info("Redis-Queue verbunden")
             break
         except Exception:
-            logger.info("Warte auf Redis... (Versuch %d/30)", attempt + 1)
+            logger.info("Warte auf Redis... (Versuch %d/%d)", attempt + 1, settings.redis_max_connect_retries)
             time.sleep(2)
 
     if r is None:
@@ -301,21 +305,24 @@ def main():
 
     # Hauptverarbeitungsschleife
     logger.info("Worker bereit — warte auf Jobs...")
+    reconnect_backoff = settings.redis_reconnect_delay
     while _running:
         try:
             result = r.brpop("mcp:queue:analyze", timeout=5)
             if result:
                 _, job_id = result
                 process_job(r, job_id)
+            reconnect_backoff = settings.redis_reconnect_delay
         except redis.ConnectionError:
-            logger.warning("Redis-Verbindung verloren — reconnecting...")
-            time.sleep(5)
+            logger.warning("Redis-Verbindung verloren — Reconnect in %ds...", reconnect_backoff)
+            time.sleep(reconnect_backoff)
+            reconnect_backoff = min(reconnect_backoff * 2, 60)
             try:
                 r = get_redis()
             except Exception:
                 pass
         except Exception as e:
-            logger.error("Fehler bei Job-Verarbeitung: %s", e)
+            logger.error("Fehler bei Job-Verarbeitung: %s", e, exc_info=True)
             time.sleep(1)
 
     # Aufraumen
