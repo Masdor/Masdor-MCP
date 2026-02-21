@@ -335,8 +335,7 @@ volumes:
     external: true
   mcp-pgvector-data:
     external: true
-  mcp-keycloak-data:
-    external: true
+  # NOTE: mcp-keycloak-data is not used — Keycloak stores data in PostgreSQL
   mcp-n8n-data:
     external: true
   mcp-nginx-logs:

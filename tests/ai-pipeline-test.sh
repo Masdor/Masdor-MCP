@@ -73,9 +73,9 @@ else
     check "Ollama has models loaded" 1
 fi
 
-# 3. Redis Queue accessible
+# 3. Redis Queue accessible (requires auth — use REDISCLI_AUTH)
 echo "=== Step 3: Redis Queue ==="
-redis_ping=$(docker exec mcp-redis-queue redis-cli ping 2>/dev/null || echo "")
+redis_ping=$(docker exec -e REDISCLI_AUTH="${REDIS_QUEUE_PASSWORD:-changeme}" mcp-redis-queue redis-cli ping 2>/dev/null || echo "")
 check "Redis Queue responds to PING" "$([ "$redis_ping" = "PONG" ] && echo 0 || echo 1)"
 
 # 4. Send test alert via Python stdlib (UUID fuer eindeutige Korrelation)
@@ -129,14 +129,14 @@ fi
 echo "=== Step 5: Job in Queue ==="
 sleep 2
 
-# Spezifische Suche nach unserem Job
+# Spezifische Suche nach unserem Job (Jobs sind Redis Hashes, nicht Strings)
 if [ -n "${JOB_ID:-}" ]; then
-    job_data=$(docker exec mcp-redis-queue redis-cli get "mcp:job:${JOB_ID}" 2>/dev/null || echo "")
+    job_data=$(docker exec -e REDISCLI_AUTH="${REDIS_QUEUE_PASSWORD:-changeme}" mcp-redis-queue redis-cli hget "mcp:job:${JOB_ID}" "id" 2>/dev/null || echo "")
     if [ -n "$job_data" ]; then
         check "Job ${JOB_ID} found in Redis" 0
     else
         # Job wurde moeglicherweise bereits vom Worker verarbeitet — Dedup pruefen
-        dedup_found=$(docker exec mcp-redis-queue redis-cli keys "mcp:dedup:*${TEST_UUID}*" 2>/dev/null | wc -l || echo "0")
+        dedup_found=$(docker exec -e REDISCLI_AUTH="${REDIS_QUEUE_PASSWORD:-changeme}" mcp-redis-queue redis-cli keys "mcp:dedup:*${TEST_UUID}*" 2>/dev/null | wc -l || echo "0")
         if [ "$dedup_found" -gt 0 ]; then
             check "Job already processed, dedup key found for ${TEST_UUID}" 0
         else
@@ -146,15 +146,15 @@ if [ -n "${JOB_ID:-}" ]; then
     fi
 else
     # Fallback: allgemeine Suche
-    jobs=$(docker exec mcp-redis-queue redis-cli keys "mcp:job:*" 2>/dev/null | wc -l || echo "0")
-    queue_len=$(docker exec mcp-redis-queue redis-cli llen "mcp:queue:analyze" 2>/dev/null || echo "0")
-    dedup_keys=$(docker exec mcp-redis-queue redis-cli keys "mcp:dedup:*" 2>/dev/null | wc -l || echo "0")
+    jobs=$(docker exec -e REDISCLI_AUTH="${REDIS_QUEUE_PASSWORD:-changeme}" mcp-redis-queue redis-cli keys "mcp:job:*" 2>/dev/null | wc -l || echo "0")
+    queue_len=$(docker exec -e REDISCLI_AUTH="${REDIS_QUEUE_PASSWORD:-changeme}" mcp-redis-queue redis-cli llen "mcp:queue:analyze" 2>/dev/null || echo "0")
+    dedup_keys=$(docker exec -e REDISCLI_AUTH="${REDIS_QUEUE_PASSWORD:-changeme}" mcp-redis-queue redis-cli keys "mcp:dedup:*" 2>/dev/null | wc -l || echo "0")
     total_keys=$((jobs + dedup_keys))
 
     if [ "$total_keys" -gt 0 ] || [ "$queue_len" -gt 0 ]; then
         check "Job/dedup key exists in Redis (jobs=$jobs, dedup=$dedup_keys, queue=$queue_len)" 0
     else
-        all_keys=$(docker exec mcp-redis-queue redis-cli keys "*" 2>/dev/null | wc -l || echo "0")
+        all_keys=$(docker exec -e REDISCLI_AUTH="${REDIS_QUEUE_PASSWORD:-changeme}" mcp-redis-queue redis-cli keys "*" 2>/dev/null | wc -l || echo "0")
         echo "    Total Redis keys: $all_keys"
         check "Job exists in Redis" 1
     fi

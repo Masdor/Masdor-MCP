@@ -337,7 +337,7 @@ phase4_ops() {
         elapsed=$((elapsed + 10))
     done
 
-    local ops_containers=("mcp-zammad-rails" "mcp-elasticsearch" "mcp-bookstack" "mcp-vaultwarden")
+    local ops_containers=("mcp-zammad-rails" "mcp-elasticsearch" "mcp-bookstack" "mcp-vaultwarden" "mcp-portainer")
     for container in "${ops_containers[@]}"; do
         if wait_healthy "$container" 180; then
             log_ok "${container} is healthy"
@@ -345,13 +345,6 @@ phase4_ops() {
             gate_fail "phase4" "${container} not healthy" "Check logs: docker logs ${container} --tail 100"
         fi
     done
-
-    # Portainer has no /bin/sh — check running instead of healthy
-    if docker ps --filter "name=mcp-portainer" --filter "status=running" -q | grep -q .; then
-        log_ok "mcp-portainer is running"
-    else
-        gate_fail "phase4" "mcp-portainer not running" "Check logs: docker logs mcp-portainer --tail 100"
-    fi
 
     log_warn "IMPORTANT: Open http://${MCP_HOST_IP:-localhost}/portainer/ within 5 minutes to create the admin account!"
 

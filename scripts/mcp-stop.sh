@@ -22,6 +22,12 @@ log_ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
 
 cd "$PROJECT_DIR"
 
+# Source .env for project name and suppress orphan warnings
+if [ -f .env ]; then
+    set -a; source .env; set +a
+fi
+export COMPOSE_IGNORE_ORPHANS=1
+
 ENV_FILE="--env-file .env"
 
 echo ""

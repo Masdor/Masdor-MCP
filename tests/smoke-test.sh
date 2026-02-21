@@ -117,6 +117,8 @@ check "#24 Grafana Renderer" "mcp-grafana-renderer" running
 echo ""
 
 echo "=== Remote Stack ==="
+check "   Guacamole Init"   "mcp-guacamole-init"   exited_ok
+check "   Guacamole Schema" "mcp-guacamole-schema"  exited_ok
 check "#25 MeshCentral"  "mcp-meshcentral" healthy
 check "#26 Guacamole"    "mcp-guacamole"   healthy
 check "#27 Guacd"        "mcp-guacd"       healthy

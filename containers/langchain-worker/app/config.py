@@ -17,7 +17,7 @@ class Settings:
     litellm_host: str = os.getenv("LITELLM_HOST", "http://litellm:4000")
 
     # Modelle
-    primary_model: str = os.getenv("PRIMARY_MODEL", "mistral:7b")
+    primary_model: str = os.getenv("PRIMARY_MODEL", "mistral:7b-instruct-v0.3-q4_K_M")
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 
     # pgvector
