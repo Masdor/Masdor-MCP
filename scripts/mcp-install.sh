@@ -337,7 +337,7 @@ phase4_ops() {
         elapsed=$((elapsed + 10))
     done
 
-    local ops_containers=("mcp-zammad-rails" "mcp-elasticsearch" "mcp-bookstack" "mcp-vaultwarden" "mcp-portainer")
+    local ops_containers=("mcp-zammad-rails" "mcp-zammad-websocket" "mcp-zammad-scheduler" "mcp-elasticsearch" "mcp-bookstack-db" "mcp-bookstack" "mcp-vaultwarden" "mcp-portainer")
     for container in "${ops_containers[@]}"; do
         if wait_healthy "$container" 180; then
             log_ok "${container} is healthy"
@@ -364,7 +364,7 @@ phase5_telemetry() {
 
     log_info "Waiting for Telemetry containers..."
 
-    local telemetry_containers=("mcp-zabbix-server" "mcp-zabbix-web" "mcp-grafana" "mcp-loki" "mcp-uptime-kuma")
+    local telemetry_containers=("mcp-zabbix-server" "mcp-zabbix-web" "mcp-grafana" "mcp-loki" "mcp-alloy" "mcp-uptime-kuma" "mcp-crowdsec")
     for container in "${telemetry_containers[@]}"; do
         if wait_healthy "$container" 180; then
             log_ok "${container} is healthy"
@@ -401,7 +401,7 @@ phase6_ai() {
 
     log_info "Waiting for AI containers..."
 
-    local ai_containers=("mcp-ollama" "mcp-redis-queue" "mcp-ai-gateway")
+    local ai_containers=("mcp-ollama" "mcp-redis-queue" "mcp-litellm" "mcp-langchain" "mcp-ai-gateway")
     for container in "${ai_containers[@]}"; do
         if wait_healthy "$container" 180; then
             log_ok "${container} is healthy"
@@ -458,11 +458,10 @@ phase7_remote() {
         log_warn "mcp-guacamole not healthy yet (may need more time)"
     fi
 
-    # guacd has no healthcheck — check running
-    if docker ps --filter "name=mcp-guacd" --filter "status=running" -q | grep -q .; then
-        log_ok "mcp-guacd is running"
+    if wait_healthy "mcp-guacd" 120; then
+        log_ok "mcp-guacd is healthy"
     else
-        log_warn "mcp-guacd not running"
+        log_warn "mcp-guacd not healthy yet (may need more time)"
     fi
 
     log_ok "Phase 7: Remote Stack PASSED"

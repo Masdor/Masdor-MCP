@@ -87,7 +87,7 @@ for c in $(docker ps --filter "label=com.docker.compose.project=${PROJECT}" --fo
         containers_with_nnp=$((containers_with_nnp + 1))
     fi
 done
-check "Containers with no-new-privileges: $containers_with_nnp/$total_containers" "$([ "$containers_with_nnp" -gt 0 ] && echo 0 || echo 1)"
+check "All containers have no-new-privileges: $containers_with_nnp/$total_containers" "$([ "$containers_with_nnp" -eq "$total_containers" ] && echo 0 || echo 1)"
 
 # 6. Check .env file permissions (should not be world-readable)
 echo "=== Secret File Permissions ==="

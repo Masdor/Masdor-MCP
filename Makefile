@@ -13,12 +13,13 @@ ifneq (,$(wildcard .env))
 endif
 
 PROJECT := $(or $(COMPOSE_PROJECT_NAME),$(shell grep '^COMPOSE_PROJECT_NAME=' .env 2>/dev/null | cut -d= -f2),mcp)
+export COMPOSE_IGNORE_ORPHANS := 1
 ENV_FILE := --env-file .env
-COMPOSE_CORE := docker compose $(ENV_FILE) -f compose/core/docker-compose.yml
-COMPOSE_OPS := docker compose $(ENV_FILE) -f compose/ops/docker-compose.yml
-COMPOSE_TELEMETRY := docker compose $(ENV_FILE) -f compose/telemetry/docker-compose.yml
-COMPOSE_REMOTE := docker compose $(ENV_FILE) -f compose/remote/docker-compose.yml
-COMPOSE_AI := docker compose $(ENV_FILE) -f compose/ai/docker-compose.yml
+COMPOSE_CORE := docker compose -p $(PROJECT) $(ENV_FILE) -f compose/core/docker-compose.yml
+COMPOSE_OPS := docker compose -p $(PROJECT) $(ENV_FILE) -f compose/ops/docker-compose.yml
+COMPOSE_TELEMETRY := docker compose -p $(PROJECT) $(ENV_FILE) -f compose/telemetry/docker-compose.yml
+COMPOSE_REMOTE := docker compose -p $(PROJECT) $(ENV_FILE) -f compose/remote/docker-compose.yml
+COMPOSE_AI := docker compose -p $(PROJECT) $(ENV_FILE) -f compose/ai/docker-compose.yml
 
 # === LIFECYCLE ==============================================================
 
@@ -162,11 +163,12 @@ pull-images: ## Pull all Docker images (requires internet)
 clean: ## Stop all containers and remove volumes (DESTRUCTIVE)
 	@echo "WARNING: This will stop all containers and remove all data!"
 	@read -p "Type 'yes' to confirm: " confirm && [ "$$confirm" = "yes" ] || exit 1
-	$(COMPOSE_AI) down -v 2>/dev/null || true
-	$(COMPOSE_REMOTE) down -v 2>/dev/null || true
-	$(COMPOSE_TELEMETRY) down -v 2>/dev/null || true
-	$(COMPOSE_OPS) down -v 2>/dev/null || true
-	$(COMPOSE_CORE) down -v 2>/dev/null || true
+	$(COMPOSE_AI) down 2>/dev/null || true
+	$(COMPOSE_REMOTE) down 2>/dev/null || true
+	$(COMPOSE_TELEMETRY) down 2>/dev/null || true
+	$(COMPOSE_OPS) down 2>/dev/null || true
+	$(COMPOSE_CORE) down 2>/dev/null || true
+	@docker volume ls --filter "name=mcp-" -q | xargs -r docker volume rm 2>/dev/null || true
 	@echo "All containers stopped and volumes removed."
 
 # === HELP ===================================================================
