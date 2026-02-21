@@ -252,6 +252,7 @@ services:
     volumes:
       - ../../config/crowdsec/acquis.yml:/etc/crowdsec/acquis.yaml:ro
       - /var/log:/var/log:ro
+      - mcp-nginx-logs:/var/log/nginx:ro
       - mcp-crowdsec-data:/var/lib/crowdsec/data
     healthcheck:
       test: ["CMD-SHELL", "cscli version > /dev/null 2>&1 || exit 1"]
@@ -310,6 +311,8 @@ volumes:
   mcp-loki-data:
     external: true
   mcp-uptime-kuma-data:
+    external: true
+  mcp-nginx-logs:
     external: true
   mcp-crowdsec-data:
     external: true

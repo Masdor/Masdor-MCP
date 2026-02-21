@@ -12,6 +12,7 @@ ifneq (,$(wildcard .env))
   export
 endif
 
+PROJECT := $(or $(COMPOSE_PROJECT_NAME),$(shell grep '^COMPOSE_PROJECT_NAME=' .env 2>/dev/null | cut -d= -f2),mcp)
 ENV_FILE := --env-file .env
 COMPOSE_CORE := docker compose $(ENV_FILE) -f compose/core/docker-compose.yml
 COMPOSE_OPS := docker compose $(ENV_FILE) -f compose/ops/docker-compose.yml
@@ -82,12 +83,12 @@ status: ## Show status of all containers
 
 .PHONY: ps
 ps: ## Show running containers (docker ps)
-	@docker ps --filter "label=com.docker.compose.project=mcp" \
+	@docker ps --filter "label=com.docker.compose.project=$(PROJECT)" \
 		--format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
 .PHONY: logs
 logs: ## Tail logs for all stacks (Ctrl+C to stop)
-	@docker ps --filter "label=com.docker.compose.project=mcp" -q | \
+	@docker ps --filter "label=com.docker.compose.project=$(PROJECT)" -q | \
 		xargs -r docker logs --tail 20 --follow 2>&1
 
 .PHONY: logs-core

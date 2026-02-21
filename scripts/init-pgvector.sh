@@ -18,7 +18,7 @@ echo "============================================"
 # ---------------------------------------------------------------------------
 # 1. pgvector Extension aktivieren
 # ---------------------------------------------------------------------------
-echo "[1/4] Aktiviere pgvector Extension..."
+echo "[1/5] Aktiviere pgvector Extension..."
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
     CREATE EXTENSION IF NOT EXISTS vector;
     CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -27,7 +27,7 @@ EOSQL
 # ---------------------------------------------------------------------------
 # 2. Embeddings-Tabelle fuer RAG-Wissensbasis
 # ---------------------------------------------------------------------------
-echo "[2/4] Erstelle embeddings Tabelle..."
+echo "[2/5] Erstelle embeddings Tabelle..."
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
     CREATE TABLE IF NOT EXISTS embeddings (
         id              SERIAL PRIMARY KEY,
@@ -61,7 +61,7 @@ EOSQL
 # ---------------------------------------------------------------------------
 # 3. Analyse-Log-Tabelle fuer Audit-Trail
 # ---------------------------------------------------------------------------
-echo "[3/4] Erstelle analysis_log Tabelle..."
+echo "[3/5] Erstelle analysis_log Tabelle..."
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
     CREATE TABLE IF NOT EXISTS analysis_log (
         id                  SERIAL PRIMARY KEY,

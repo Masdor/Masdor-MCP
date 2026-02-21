@@ -52,7 +52,7 @@ gate_fail() {
         echo "Cause:     ${cause}"
         echo ""
         echo "=== Docker Container Status ==="
-        docker ps -a --filter "label=com.docker.compose.project=mcp" \
+        docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME:-mcp}" \
             --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
         echo ""
         echo "=== System Resources ==="
@@ -231,7 +231,7 @@ phase2_environment() {
     local volumes=(
         # Core Stack
         "mcp-postgres-data" "mcp-pgvector-data" "mcp-redis-data"
-        "mcp-keycloak-data" "mcp-n8n-data" "mcp-ntfy-cache"
+        "mcp-keycloak-data" "mcp-n8n-data" "mcp-ntfy-cache" "mcp-nginx-logs"
         # Ops Stack
         "mcp-elasticsearch-data" "mcp-zammad-data" "mcp-zammad-tmp"
         "mcp-bookstack-data" "mcp-vaultwarden-data" "mcp-portainer-data"
@@ -252,7 +252,7 @@ phase2_environment() {
         fi
     done
 
-    log_ok "All 20 Docker volumes created"
+    log_ok "All 22 Docker volumes created"
 
     # Create logs directory
     mkdir -p "${PROJECT_DIR}/logs"
@@ -398,7 +398,7 @@ phase6_ai() {
 
     # Pull AI models
     log_info "Pulling AI models (this may take a while)..."
-    docker exec mcp-ollama ollama pull "${OLLAMA_MODEL:-mistral:7b}" || log_warn "Primary model pull failed"
+    docker exec mcp-ollama ollama pull "${OLLAMA_MODEL:-mistral:7b-instruct-v0.3-q4_K_M}" || log_warn "Primary model pull failed"
     docker exec mcp-ollama ollama pull "${EMBEDDING_MODEL:-nomic-embed-text}" || log_warn "Embedding model pull failed"
 
     # Start remaining AI services

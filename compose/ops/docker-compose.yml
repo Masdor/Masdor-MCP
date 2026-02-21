@@ -16,6 +16,8 @@ services:
 
   # --------------------------------------------------------------------------
   # Zammad Init (one-shot — runs DB migrations then exits)
+  # NOTE: Zammad depends on Redis from Core stack (cross-stack dependency).
+  # Core stack MUST be healthy before starting Ops stack (enforced by mcp-install.sh).
   # --------------------------------------------------------------------------
   zammad-init:
     image: ghcr.io/zammad/zammad:${ZAMMAD_TAG:-6.4.1}
@@ -366,7 +368,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - mcp-portainer-data:/data
     healthcheck:
-      test: ["NONE"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/ >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     deploy:
       resources:
         limits:
