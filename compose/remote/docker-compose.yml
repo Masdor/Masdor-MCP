@@ -30,6 +30,11 @@ services:
         echo "Generiere Guacamole DB-Schema..."
         /opt/guacamole/bin/initdb.sh --postgresql > /initdb/initdb.sql
         echo "Schema SQL generiert ($$(wc -l < /initdb/initdb.sql) Zeilen)"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
     logging: *default-logging
     security_opt:
       - no-new-privileges:true
@@ -62,6 +67,11 @@ services:
     depends_on:
       guacamole-init:
         condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
     logging: *default-logging
     security_opt:
       - no-new-privileges:true

@@ -96,7 +96,9 @@ check "   Zammad Init"       "mcp-zammad-init"      exited_ok
 check "#9 Zammad Rails"      "mcp-zammad-rails"     healthy
 check "#10 Zammad WS"        "mcp-zammad-websocket" healthy
 check "#11 Zammad Scheduler"  "mcp-zammad-scheduler" healthy
+check "   Zammad Memcached"  "mcp-zammad-memcached" running
 check "#12 Elasticsearch"    "mcp-elasticsearch"    healthy
+check "   BookStack DB"      "mcp-bookstack-db"     healthy
 check "#13 BookStack"        "mcp-bookstack"        healthy
 check "#14 Vaultwarden"      "mcp-vaultwarden"      healthy
 check "#15 Portainer"        "mcp-portainer"        running
